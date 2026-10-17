@@ -9,19 +9,22 @@
 <title>IGBT Test Cell — Virtual Prototype (SIMULATION)</title>
 <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAMklEQVR42mNgGAWDCpTtJIz+EwFGLRi1YNSCUQsoseA/lcCoBaMWjFowagElFoyCAQEAswS1rDXX+5EAAAAASUVORK5CYII=">
 <style>
-  /* Tokens from DESIGN.md (NVIDIA-style system, adapted for this offline app). */
+  /* Tokens from DESIGN.md (project box wins): black frame, white canvas, one green accent.
+     Status colours always carry text. Offline: system fonts only. */
   :root {
     --primary:#76b900; --primary-dark:#5a8d00; --on-primary:#000000;
     --ink:#000000; --body:#1a1a1a; --mute:#757575; --stone:#898989; --ash:#a7a7a7;
-    --canvas:#ffffff; --surface-soft:#f7f7f7; --surface-dark:#000000; --surface-elevated:#1a1a1a;
-    --hairline:#cccccc; --hairline-strong:#5e5e5e; --on-dark:#ffffff; --on-dark-mute:rgba(255,255,255,0.7);
+    --canvas:#ffffff; --surface-soft:#f7f7f7; --surface-dark:#000000; --surface-elevated:#1a1a1a; --surface-panel:#0d0d0d;
+    --hairline:#cccccc; --hairline-strong:#5e5e5e; --on-dark:#ffffff; --on-dark-mute:rgba(255,255,255,0.7); --on-dark-faint:rgba(255,255,255,0.18);
     --error:#e52020; --error-deep:#650b0b; --warning:#df6500; --warning-bright:#ef9100;
     --success-deep:#3f8500; --yellow-pale:#feeeb2;
     --r-sm:2px;
-    --s-xs:4px; --s-sm:8px; --s-md:12px; --s-lg:16px; --s-xl:24px; --s-xxl:32px; --s-section:64px;
+    --s-xs:4px; --s-sm:8px; --s-md:12px; --s-lg:16px; --s-xl:24px; --s-xxl:32px; --s-section:56px;
     --ease:cubic-bezier(0.2, 0.7, 0.2, 1);
     --z-banner:30; --z-skip:40;
     --font:Arial, sans-serif;
+    --mono:ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, "Liberation Mono", monospace;
+    --wrap:1240px;
   }
   * { box-sizing:border-box; }
   html { -webkit-text-size-adjust:100%; scroll-padding-top:96px; -webkit-tap-highlight-color:rgba(118, 185, 0, 0.25); }
@@ -32,6 +35,7 @@
   h1, h2, h3 { color:var(--ink); font-weight:700; line-height:1.25; margin:0; text-wrap:balance; }
   p { max-width:72ch; }
   code { font:700 0.9375em/1.4 var(--font); color:var(--ink); }
+  .num-font { font-family:var(--mono); font-variant-numeric:tabular-nums; }
 
   .skip { position:absolute; left:var(--s-lg); top:-100px; z-index:var(--z-skip); background:var(--primary);
           color:var(--on-primary); font-weight:700; padding:var(--s-md) var(--s-lg); border-radius:var(--r-sm); }
@@ -46,28 +50,34 @@
 
   /* Primary nav: black frame */
   .topbar { background:var(--surface-dark); color:var(--on-dark); }
-  .topbar-inner { max-width:1120px; margin:0 auto; min-height:64px; padding:var(--s-md) var(--s-xl);
+  .topbar-inner { max-width:var(--wrap); margin:0 auto; min-height:56px; padding:var(--s-sm) var(--s-xl);
                   display:flex; align-items:center; gap:var(--s-lg); flex-wrap:wrap; }
   .brand { display:flex; align-items:center; gap:var(--s-md); margin-right:auto; min-width:0; }
-  .brand-mark { flex:none; width:16px; height:16px; background:var(--primary); }
-  .brand h1 { color:var(--on-dark); font-size:17px; line-height:1.3; }
+  .brand-mark { flex:none; display:grid; grid-template-columns:repeat(2, 7px); gap:2px; }
+  .brand-mark i { width:7px; height:7px; background:var(--on-dark-faint); }
+  .brand-mark i:first-child { background:var(--primary); }
+  .brand h1 { color:var(--on-dark); font-size:16px; line-height:1.3; letter-spacing:0.01em; }
   .brand h1 span { color:var(--on-dark-mute); font-weight:400; }
   .badge { display:inline-block; max-width:100%; font-size:11px; font-weight:700; line-height:1.3; text-transform:uppercase;
            letter-spacing:0.02em; padding:6px 10px; border-radius:var(--r-sm); border:1px solid; }
   .badge-demo { color:var(--on-dark); border-color:var(--hairline-strong); background:var(--surface-elevated); }
   .badge-prod { color:var(--warning-bright); border-color:var(--warning-bright); background:var(--surface-elevated); }
 
-  /* Workflow strip */
+  /* Workflow strip: a numbered progression with a rule that fills as steps complete */
   .steps { background:var(--canvas); border-bottom:1px solid var(--hairline); }
-  .steps ol { list-style:none; margin:0 auto; max-width:1120px; padding:var(--s-sm) var(--s-xl);
-              display:flex; gap:var(--s-xs); overflow-x:auto; scrollbar-width:thin; }
-  .steps li { flex:none; display:flex; align-items:center; gap:var(--s-sm); min-height:40px; padding:0 18px;
-              font-size:14.4px; font-weight:700; letter-spacing:0.01em; color:var(--mute); border-radius:var(--r-sm);
-              transition:background-color 200ms var(--ease), color 200ms var(--ease); }
-  .steps li .n { font-variant-numeric:tabular-nums; }
-  .steps li.done { color:var(--ink); }
-  .steps li.done .n::after { content:" ✓"; color:var(--success-deep); }
-  .steps li[aria-current="step"] { background:var(--ink); color:var(--on-dark); }
+  .steps ol { list-style:none; margin:0 auto; max-width:var(--wrap); padding:0 var(--s-xl);
+              display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); overflow-x:auto; scrollbar-width:thin; }
+  .steps li { position:relative; display:flex; align-items:center; gap:var(--s-sm); min-height:48px; padding:0 var(--s-md) 0 0;
+              font-size:14px; font-weight:700; letter-spacing:0.01em; color:var(--mute); white-space:nowrap;
+              border-bottom:3px solid var(--hairline); transition:color 200ms var(--ease), border-color 200ms var(--ease); }
+  .steps li .n { display:inline-grid; place-items:center; width:24px; height:24px; font:700 12px/1 var(--mono);
+                 border:1px solid var(--hairline-strong); border-radius:var(--r-sm); color:var(--mute); background:var(--canvas); }
+  .steps li.done { color:var(--ink); border-bottom-color:var(--ink); }
+  .steps li.done .n { color:var(--on-dark); background:var(--ink); border-color:var(--ink); }
+  .steps li.done .n::after { content:"✓"; font-size:12px; margin-left:1px; }
+  .steps li.done .n { font-size:0; }
+  .steps li[aria-current="step"] { color:var(--ink); border-bottom-color:var(--primary); }
+  .steps li[aria-current="step"] .n { background:var(--primary); border-color:var(--primary); color:var(--on-primary); }
 
   /* Buttons */
   button { font:700 16px/1.25 var(--font); min-height:44px; padding:0 var(--s-xl); border-radius:var(--r-sm);
@@ -78,42 +88,84 @@
   button:active { transform:translateY(1px); }
   button.primary { background:var(--primary); border-color:var(--primary); color:var(--on-primary); }
   button.primary:hover { background:var(--primary-dark); border-color:var(--primary-dark); }
+  button.secondary { border-color:var(--ink); }
   button:disabled, button:disabled:hover { background:var(--surface-soft); border-color:var(--hairline); color:var(--ash);
                                            cursor:not-allowed; transform:none; }
-  button.on-dark { border:1px solid var(--on-dark); color:var(--on-dark); padding:0 var(--s-lg); }
+  button.on-dark { border:1px solid var(--on-dark); color:var(--on-dark); padding:0 var(--s-lg); min-height:40px; }
   button.on-dark:hover { background:var(--surface-elevated); }
   :focus-visible { outline:3px solid var(--primary); outline-offset:2px; }
   .topbar :focus-visible { outline-color:var(--on-dark); }
 
   /* Layout */
-  main { flex:1 0 auto; width:100%; max-width:1120px; margin:0 auto; padding:var(--s-xxl) var(--s-xl) var(--s-section); }
+  main { flex:1 0 auto; width:100%; max-width:var(--wrap); margin:0 auto; padding:var(--s-xl) var(--s-xl) var(--s-section); }
   section.screen { position:relative; background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-sm);
-                   padding:var(--s-xxl); }
+                   padding:var(--s-xl) var(--s-xxl) var(--s-xxl); }
   section.screen::before { content:""; position:absolute; top:-1px; left:-1px; width:12px; height:12px; background:var(--primary); }
-  .eyebrow { margin:0 0 var(--s-xs); font-size:14px; font-weight:700; line-height:1.43; text-transform:uppercase;
-             letter-spacing:0.02em; color:var(--mute); }
-  h2 { font-size:24px; }
+  section.screen.enter { animation:screen-in 180ms var(--ease); }
+  @keyframes screen-in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+  .screen-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--s-xs) var(--s-lg); }
+  .eyebrow { margin:0; font-size:12px; font-weight:700; line-height:1.43; text-transform:uppercase;
+             letter-spacing:0.06em; color:var(--mute); }
+  h2 { font-size:26px; }
   h3 { font-size:18px; line-height:1.4; margin:0 0 var(--s-xs); }
   .muted { color:var(--mute); font-size:14px; }
-  .meta { display:flex; flex-wrap:wrap; gap:var(--s-xs) var(--s-lg); margin-top:var(--s-sm); font-size:14px; color:var(--mute); }
-  .meta strong { color:var(--ink); font-variant-numeric:tabular-nums; }
+  .meta { display:flex; flex-wrap:wrap; gap:var(--s-xs) var(--s-lg); margin-top:var(--s-xs); font-size:13.5px; color:var(--mute); }
+  .meta strong { color:var(--ink); font-family:var(--mono); font-variant-numeric:tabular-nums; }
   .fixed { font-style:italic; color:var(--mute); }
+  .k { font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--mute); }
 
   /* Forms */
-  .grid { display:grid; grid-template-columns:200px minmax(0, 1fr); gap:var(--s-lg) var(--s-xl); align-items:start;
-          margin:var(--s-xl) 0 0; padding-top:var(--s-xl); border-top:1px solid var(--hairline); }
+  .setup-layout { display:grid; grid-template-columns:minmax(0, 1fr) 320px; gap:var(--s-xl) var(--s-xxl); margin-top:var(--s-xl); }
+  fieldset { margin:0 0 var(--s-xl); padding:0; border:0; min-width:0; }
+  legend { padding:0; margin:0 0 var(--s-md); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink);
+           display:flex; align-items:center; gap:var(--s-sm); width:100%; }
+  legend::after { content:""; flex:1; height:1px; background:var(--hairline); }
+  .grid { display:grid; grid-template-columns:160px minmax(0, 1fr); gap:var(--s-md) var(--s-xl); align-items:start; margin:0; }
   .grid label { font-weight:700; color:var(--ink); padding-top:11px; }
-  .field-note { margin-top:var(--s-sm); }
+  .req { font-weight:400; font-size:13px; color:var(--mute); }
+  .field-note { margin-top:var(--s-xs); }
+  .field-error { margin:var(--s-xs) 0 0; font-size:14px; font-weight:700; color:var(--error-deep); }
   input[type=text], select { font:400 16px/1.25 var(--font); color:var(--ink); background:var(--canvas);
                              min-height:44px; padding:0 var(--s-lg); border:1px solid var(--mute); border-radius:var(--r-sm);
-                             width:100%; max-width:480px; transition:border-color 200ms var(--ease); }
+                             width:100%; max-width:420px; transition:border-color 200ms var(--ease); }
   input[type=text]::placeholder { color:var(--stone); }
   input[type=text]:hover, select:hover { border-color:var(--ink); }
   input[type=text]:focus-visible, select:focus-visible { border-color:var(--ink); outline:2px solid var(--primary); outline-offset:0; }
+  input[aria-invalid="true"] { border-color:var(--error); box-shadow:inset 3px 0 0 var(--error); }
   select:disabled { background:var(--surface-soft); color:var(--stone); border-color:var(--hairline); cursor:not-allowed; }
   .inline { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-sm) var(--s-md); }
 
-  .panel { margin-top:var(--s-xxl); padding-top:var(--s-xl); border-top:1px solid var(--hairline); }
+  .quick { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--s-sm); margin:0 0 var(--s-md); }
+  .quick button { display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:2px; text-align:left;
+                  min-height:64px; padding:var(--s-sm) var(--s-md); border:1px solid var(--hairline-strong); background:var(--canvas); }
+  .quick button .qid { font:700 13px/1.2 var(--mono); color:var(--mute); }
+  .quick button .qn { font-size:15px; }
+  .quick button .qd { font-size:12.5px; font-weight:400; color:var(--mute); }
+  .quick button[aria-pressed="true"] { border:2px solid var(--ink); box-shadow:inset 0 -4px 0 var(--primary); background:var(--canvas); }
+  .quick button[aria-pressed="true"] .qid { color:var(--ink); }
+  .all-scenarios { display:grid; grid-template-columns:160px minmax(0, 1fr); gap:var(--s-md) var(--s-xl); align-items:start; }
+  .all-scenarios label { font-weight:700; color:var(--ink); padding-top:11px; }
+
+  details.adv { border:1px solid var(--hairline); border-radius:var(--r-sm); background:var(--canvas); }
+  details.adv > summary, details.sec > summary { cursor:pointer; list-style:none; display:flex; align-items:center; gap:var(--s-md);
+                         min-height:48px; padding:var(--s-sm) var(--s-lg); font-weight:700; color:var(--ink); }
+  details.adv > summary::-webkit-details-marker, details.sec > summary::-webkit-details-marker { display:none; }
+  details.adv > summary::before, details.sec > summary::before { content:""; flex:none; width:8px; height:8px; border-right:2px solid var(--ink); border-bottom:2px solid var(--ink);
+                                  transform:rotate(-45deg); transition:transform 160ms var(--ease); }
+  details[open].adv > summary::before, details[open].sec > summary::before { transform:rotate(45deg); }
+  details.adv > summary .muted, details.sec > summary .muted { font-weight:400; }
+  details.adv > .adv-body { padding:var(--s-sm) var(--s-lg) var(--s-lg); border-top:1px solid var(--hairline); }
+
+  .next { align-self:start; border:1px solid var(--ink); border-radius:var(--r-sm); padding:var(--s-lg) var(--s-xl); background:var(--surface-soft); }
+  .next h3 { font-size:12px; text-transform:uppercase; letter-spacing:0.06em; margin:0 0 var(--s-md); }
+  .next ol { margin:0; padding:0; list-style:none; counter-reset:n; }
+  .next li { counter-increment:n; position:relative; padding:0 0 var(--s-md) 34px; font-size:14px; line-height:1.45; }
+  .next li::before { content:counter(n); position:absolute; left:0; top:0; width:22px; height:22px; display:grid; place-items:center;
+                     font:700 12px/1 var(--mono); border:1px solid var(--ink); border-radius:var(--r-sm); background:var(--canvas); }
+  .next li strong { color:var(--ink); }
+  .next p { margin:var(--s-xs) 0 0; font-size:13px; color:var(--mute); }
+
+  .panel { margin-top:var(--s-xl); padding-top:var(--s-xl); border-top:1px solid var(--hairline); }
   .panel p { margin:0 0 var(--s-lg); }
 
   /* Tables */
@@ -121,7 +173,7 @@
   table { border-collapse:collapse; width:100%; }
   th, td { text-align:left; padding:10px var(--s-md); border-bottom:1px solid var(--hairline); vertical-align:middle; }
   tbody tr:last-child td { border-bottom:none; }
-  th { font-size:12px; font-weight:700; line-height:1.25; text-transform:uppercase; letter-spacing:0.02em; color:var(--mute);
+  th { font-size:11.5px; font-weight:700; line-height:1.25; text-transform:uppercase; letter-spacing:0.04em; color:var(--mute);
        background:var(--surface-soft); white-space:nowrap; }
   td { font-variant-numeric:tabular-nums; overflow-wrap:break-word; }
   td code { white-space:nowrap; }
@@ -139,7 +191,9 @@
   .chip { display:inline-block; font-size:11px; font-weight:700; line-height:1.3; letter-spacing:0.02em; padding:3px var(--s-sm);
           border:1px solid var(--hairline-strong); border-radius:var(--r-sm); background:var(--surface-soft); color:var(--ink); }
   .chip-na { border-color:var(--error-deep); color:var(--error-deep); background:var(--canvas); }
-  .actions { display:flex; gap:var(--s-md); margin-top:var(--s-xxl); flex-wrap:wrap; }
+  .actions { display:flex; gap:var(--s-md); margin-top:var(--s-xl); flex-wrap:wrap; align-items:center; }
+  .actions .spacer { flex:1; }
+  .actions-top { margin-top:var(--s-lg); }
 
   /* Limitations dialog */
   dialog#limitations { width:min(720px, calc(100vw - 32px)); max-height:calc(100dvh - 32px); padding:var(--s-xxl);
@@ -151,7 +205,7 @@
 
   /* Footer: black frame */
   footer { background:var(--surface-dark); color:var(--on-dark-mute); font-size:13px; line-height:1.5; }
-  .footer-inner { max-width:1120px; margin:0 auto; padding:var(--s-xl); display:flex; flex-wrap:wrap; gap:var(--s-xs) var(--s-xl); }
+  .footer-inner { max-width:var(--wrap); margin:0 auto; padding:var(--s-lg) var(--s-xl); display:flex; flex-wrap:wrap; gap:var(--s-xs) var(--s-xl); }
   footer strong { color:var(--on-dark); }
 
   /* FAULT_LOCKED banner (02 §7.2): error fill, white text, below the SIMULATION banner */
@@ -161,7 +215,7 @@
   #fault-banner button:hover { background:var(--error-deep); }
   #fault-banner :focus-visible { outline-color:var(--on-dark); }
 
-  .lead { margin:var(--s-lg) 0 0; }
+  .lead { margin:var(--s-md) 0 0; }
   .small { font-size:13px; }
   .caption { margin:var(--s-sm) 0 0; font-size:13px; color:var(--mute); max-width:none; }
   .section-h { margin:var(--s-xxl) 0 var(--s-xs); }
@@ -179,52 +233,130 @@
   .verdict-fail { color:var(--error-deep); background:var(--canvas); border-color:var(--error); }
   .verdict-abort { color:var(--ink); background:var(--canvas); border-color:var(--warning); }
   .verdict-label { margin:0 0 var(--s-xs); font-weight:700; color:var(--ink); }
-  .verdict-block { margin-top:var(--s-xl); padding-top:var(--s-xl); border-top:1px solid var(--hairline); }
-  .verdict-block p { margin:0 0 var(--s-xs); }
 
-  /* Pre-check lamps */
-  .lamps { list-style:none; margin:var(--s-xl) 0 0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:var(--s-md); }
+  /* Pre-check */
+  .il-summary { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-sm) var(--s-lg); margin-top:var(--s-xl);
+                padding:var(--s-lg) var(--s-xl); border:1px solid var(--ink); border-radius:var(--r-sm); background:var(--surface-soft); }
+  .il-count { font:700 28px/1.1 var(--mono); color:var(--ink); }
+  .il-summary .st { font-size:12px; padding:5px 10px; }
+  .il-summary p { margin:0; font-size:14px; color:var(--body); flex:1 1 280px; }
+  .lamps { list-style:none; margin:var(--s-lg) 0 0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:var(--s-sm); }
   .lamp { display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:2px var(--s-md); align-items:center;
-          padding:var(--s-md) var(--s-lg); border:1px solid var(--hairline); border-radius:var(--r-sm); background:var(--canvas); }
+          padding:var(--s-md) var(--s-lg); border:1px solid var(--hairline); border-radius:var(--r-sm); background:var(--canvas);
+          transition:border-color 200ms var(--ease), background-color 200ms var(--ease); }
   .lamp-dot { grid-row:span 2; width:16px; height:16px; border:1px solid var(--ink); }
   .lamp.ok .lamp-dot { background:var(--success-deep); }
-  .lamp.open { border-color:var(--error); }
+  .lamp.open { border-color:var(--error); background:#fff6f6; }
   .lamp.open .lamp-dot { background:var(--error); }
   .lamp-name { font-weight:700; color:var(--ink); }
-  .lamp-state { font-weight:700; font-size:14px; text-align:right; }
+  .lamp-state { font-weight:700; font-size:14px; text-align:right; font-family:var(--mono); }
   .lamp.ok .lamp-state { color:var(--success-deep); }
   .lamp.open .lamp-state { color:var(--error-deep); }
   .lamp-src { font-size:13px; color:var(--mute); }
   .lamp button { grid-column:3; min-height:36px; padding:0 var(--s-md); font-size:14px; }
 
-  /* Run dashboard */
-  .run-head { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:var(--s-lg) var(--s-xl);
-              margin-top:var(--s-xl); padding-top:var(--s-xl); border-top:1px solid var(--hairline); }
-  .state-line { display:flex; align-items:center; gap:var(--s-sm); }
-  .state-line .st { font-size:13px; padding:6px 10px; }
-  .k { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.02em; color:var(--mute); }
-  .clocks { display:flex; flex-wrap:wrap; gap:var(--s-lg) var(--s-xxl); }
+  /* Run: instrument console */
+  .console { margin-top:var(--s-lg); background:var(--surface-panel); color:var(--on-dark); border-radius:var(--r-sm);
+             display:grid; grid-template-columns:minmax(0, 1.25fr) minmax(0, 1fr) auto; gap:0; border:1px solid var(--ink); }
+  .console > div { padding:var(--s-lg) var(--s-xl); min-width:0; }
+  .console > div + div { border-left:1px solid var(--on-dark-faint); }
+  .console .k { color:var(--on-dark-mute); }
+  .state-line { display:flex; align-items:center; gap:var(--s-sm); flex-wrap:wrap; margin-top:var(--s-xs); }
+  #run-state { font-size:15px; padding:6px 12px; letter-spacing:0.04em; transition:background-color 200ms var(--ease), border-color 200ms var(--ease), color 200ms var(--ease); }
+  .console #run-state.st { background:var(--surface-elevated); color:var(--on-dark); border-color:var(--hairline-strong); }
+  .console #run-state.st-run { background:var(--on-dark); color:var(--ink); border-color:var(--on-dark); }
+  .console #run-state.st-warn { background:var(--warning); color:var(--ink); border-color:var(--warning); box-shadow:none; }
+  .console #run-state.st-pass { background:var(--primary); color:var(--ink); border-color:var(--primary); }
+  .console #run-state.st-lock { background:var(--error); color:var(--on-dark); border-color:var(--error); }
+  .state-text { margin:var(--s-sm) 0 0; font-size:14.5px; line-height:1.45; color:var(--on-dark); max-width:60ch; }
+  .active-now { margin-top:var(--s-lg); padding-top:var(--s-md); border-top:1px solid var(--on-dark-faint); }
+  .active-now .id { font:700 22px/1.2 var(--mono); color:var(--primary); margin-right:var(--s-sm); }
+  .active-now .nm { font-size:17px; font-weight:700; }
+  .active-now .sub { margin:2px 0 0; font-size:13px; color:var(--on-dark-mute); }
+  .cbar { position:relative; height:6px; margin-top:var(--s-sm); background:var(--on-dark-faint); }
+  .cbar > span { display:block; height:100%; width:0; background:var(--primary); transition:width 120ms linear; }
+  .vbus { font:700 40px/1.1 var(--mono); font-variant-numeric:tabular-nums; margin-top:var(--s-xs); white-space:nowrap; }
+  .vbus small { font-size:18px; font-weight:400; color:var(--on-dark-mute); margin-left:4px; }
+  .vbus-tag { display:inline-block; margin-top:var(--s-xs); font-size:12.5px; font-weight:700; letter-spacing:0.02em;
+              padding:3px 8px; border:1px solid var(--on-dark-faint); border-radius:var(--r-sm); }
+  .vbus-tag.hot { color:var(--ink); background:var(--warning-bright); border-color:var(--warning-bright); }
+  .vbus-tag.low { color:var(--ink); background:var(--primary); border-color:var(--primary); }
+  .vbus-tag.lock { color:var(--on-dark); background:var(--error); border-color:var(--error); }
+  .meter { position:relative; height:10px; margin-top:var(--s-md); border:1px solid var(--hairline-strong); background:var(--surface-elevated); }
+  .meter span { display:block; height:100%; width:0; background:var(--warning-bright); transition:width 120ms linear, background-color 200ms var(--ease); }
+  .meter span.low { background:var(--primary); }
+  .meter i { position:absolute; top:-4px; bottom:-4px; width:2px; background:var(--on-dark); }
+  #bus-scale { color:var(--on-dark-mute); margin:var(--s-xs) 0 0; }
+  .tiles { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:var(--s-sm); margin-top:var(--s-lg); }
+  .tile { border:1px solid var(--on-dark-faint); border-radius:var(--r-sm); padding:6px var(--s-sm); min-width:0; }
+  .tile .k { display:block; font-size:10.5px; }
+  .tile b { display:block; font:700 13px/1.3 var(--mono); letter-spacing:0.02em; overflow-wrap:anywhere; }
+  .tile.hot { border-color:var(--warning-bright); box-shadow:inset 3px 0 0 var(--warning-bright); }
+  .tile.hot b { color:var(--warning-bright); }
+  .tile.safe b { color:var(--primary); }
+  .tile.lock { background:var(--error); border-color:var(--error); }
+  .tile.lock .k { color:var(--on-dark); }
+  .abort-box { display:flex; flex-direction:column; justify-content:center; gap:var(--s-sm); width:200px; }
+  #btn-abort { min-height:88px; font-size:22px; letter-spacing:0.08em; background:var(--error); border-color:var(--error); color:var(--on-dark); }
+  #btn-abort:hover { background:#c31a1a; border-color:#c31a1a; }
+  #btn-abort:disabled { background:var(--surface-elevated); border-color:var(--hairline-strong); color:var(--stone); }
+  .abort-box p { margin:0; font-size:12.5px; line-height:1.4; color:var(--on-dark-mute); }
+  .console :focus-visible { outline-color:var(--on-dark); }
+
+  .overall-line { margin:var(--s-md) 0 0; padding:var(--s-sm) var(--s-md); background:var(--surface-elevated); border-left:3px solid var(--on-dark);
+                  font-size:14px; font-weight:700; }
+
+  /* Stage track: T00 … T10 at a glance (text + colour) */
+  .track { list-style:none; margin:var(--s-lg) 0 0; padding:0; display:grid; grid-template-columns:repeat(12, minmax(0, 1fr)); gap:3px; }
+  .track li { position:relative; padding:6px 6px 8px; min-width:0; border:1px solid var(--hairline); border-radius:var(--r-sm); background:var(--canvas);
+              transition:background-color 200ms var(--ease), border-color 200ms var(--ease), color 200ms var(--ease); }
+  .track .tid { display:block; font:700 13px/1.2 var(--mono); color:var(--ink); }
+  .track .ts { display:block; font-size:10px; font-weight:700; letter-spacing:0.03em; text-transform:uppercase; color:var(--mute);
+               white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .track li::after { content:""; position:absolute; left:-1px; right:-1px; bottom:-1px; height:3px; background:transparent; }
+  .track li.t-pass::after { background:var(--success-deep); }
+  .track li.t-pass .ts { color:var(--success-deep); }
+  .track li.t-done::after { background:var(--ink); }
+  .track li.t-fail { border-color:var(--error); }
+  .track li.t-fail::after { background:var(--error); }
+  .track li.t-fail .ts { color:var(--error-deep); }
+  .track li.t-run { background:var(--ink); border-color:var(--ink); }
+  .track li.t-run .tid { color:var(--primary); }
+  .track li.t-run .ts { color:var(--on-dark); }
+  .track li.t-warn { border-color:var(--warning); }
+  .track li.t-warn::after { background:var(--warning); }
+  .track li.t-warn .ts { color:var(--ink); }
+  .track li.t-lock { background:var(--error); border-color:var(--error); }
+  .track li.t-lock .tid, .track li.t-lock .ts { color:var(--on-dark); }
+  .track li.t-skip { background:repeating-linear-gradient(135deg, var(--surface-soft) 0 4px, var(--canvas) 4px 8px); }
+  .track li.t-skip .tid { color:var(--mute); }
+  .track .tbar { position:absolute; left:0; bottom:0; height:3px; background:var(--primary); transition:width 120ms linear; }
+
+  .clocks { display:flex; flex-wrap:wrap; gap:var(--s-md) var(--s-xxl); }
   .clock { display:flex; flex-direction:column; gap:2px; }
-  .clock .v { font-size:24px; font-weight:700; line-height:1.25; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .clock .v { font:700 22px/1.25 var(--mono); color:var(--ink); font-variant-numeric:tabular-nums; }
+  .clockbar { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:var(--s-sm) var(--s-xl); margin-top:var(--s-lg); }
+  .clockbar .caption { flex:1 1 320px; margin:0; }
+
   .run-grid { display:grid; grid-template-columns:minmax(0, 5fr) minmax(0, 7fr); gap:var(--s-lg); margin-top:var(--s-lg); }
   .run-grid-even { grid-template-columns:repeat(2, minmax(0, 1fr)); }
   .block { min-width:0; border:1px solid var(--hairline); border-radius:var(--r-sm); padding:var(--s-lg) var(--s-xl); background:var(--canvas); }
   .block-wide { margin-top:var(--s-lg); }
-  .block h3 { font-size:12px; line-height:1.4; font-weight:700; text-transform:uppercase; letter-spacing:0.02em; color:var(--mute); margin:0 0 var(--s-md); }
+  .block h3 { font-size:11.5px; line-height:1.4; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--mute); margin:0 0 var(--s-md); }
   .block h3.sub { margin-top:var(--s-xl); }
 
   .stage-list { list-style:none; margin:0; padding:0; }
   .stage-list li { display:grid; grid-template-columns:48px minmax(0, 1fr) auto; gap:2px var(--s-sm); align-items:center;
                    padding:var(--s-sm) var(--s-sm); border-bottom:1px solid var(--hairline); }
   .stage-list li:last-child { border-bottom:none; }
-  .stage-list .id { font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .stage-list .id { font:700 14px/1.3 var(--mono); color:var(--ink); }
   .stage-list .nm { font-size:14px; line-height:1.35; color:var(--body); }
   .stage-list .cls { grid-column:2; font-size:11px; font-weight:700; letter-spacing:0.02em; color:var(--mute); }
   .stage-list .stat { grid-row:span 2; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
   .stage-list li.active { background:var(--surface-soft); box-shadow:inset 3px 0 0 var(--primary); }
   .stage-list li.skipped .nm, .stage-list li.skipped .id { color:var(--mute); }
   .progress { height:4px; background:var(--hairline); margin-top:var(--s-sm); }
-  .progress > span { display:block; height:100%; background:var(--ink); }
+  .progress > span { display:block; height:100%; background:var(--ink); transition:width 120ms linear; }
 
   .active-name { font-size:17px; font-weight:700; line-height:1.4; color:var(--ink); margin:0; }
   .active-meta { margin:var(--s-xs) 0 0; font-size:14px; color:var(--mute); }
@@ -232,72 +364,128 @@
   .rcard:first-child { border-top:none; padding-top:0; }
   .rcard-top { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:var(--s-xs) var(--s-md); }
   .rcard-label { font-weight:700; color:var(--ink); }
-  .rcard-value { font-size:28px; font-weight:700; line-height:1.2; color:var(--ink); font-variant-numeric:tabular-nums; margin:var(--s-xs) 0; }
-  .rcard-value .u { font-size:16px; font-weight:400; color:var(--mute); margin-left:4px; }
+  .rcard-value { font:700 28px/1.2 var(--mono); color:var(--ink); font-variant-numeric:tabular-nums; margin:var(--s-xs) 0; }
+  .rcard-value .u { font:400 16px/1 var(--font); color:var(--mute); margin-left:4px; }
   .rcard-rule { font-size:14px; color:var(--body); margin:0 0 var(--s-xs); }
+  .note-box { margin:0 0 var(--s-md); padding:var(--s-sm) var(--s-md); border:1px solid var(--warning); box-shadow:inset 3px 0 0 var(--warning);
+              font-size:13.5px; color:var(--ink); max-width:none; }
   .chips { display:flex; flex-wrap:wrap; gap:4px; margin:var(--s-xs) 0; }
   .equation { margin-top:var(--s-lg); padding:var(--s-md) var(--s-lg); background:var(--surface-soft); border-left:3px solid var(--ink);
-              font-size:15px; font-weight:700; line-height:1.5; color:var(--ink); overflow-wrap:anywhere; }
-  .equation .k { display:block; margin-bottom:2px; }
+              font:700 13.5px/1.55 var(--mono); color:var(--ink); overflow-wrap:anywhere; }
+  .equation .k { display:block; margin-bottom:2px; font-family:var(--font); }
   .empty { color:var(--mute); font-size:14px; margin:0; }
 
   .kv { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:var(--s-sm) var(--s-lg); margin:0; }
   .kv dt { font-size:14px; color:var(--mute); }
   .kv dd { margin:0; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
-  .meter { height:10px; margin-top:var(--s-lg); border:1px solid var(--hairline-strong); background:var(--surface-soft); }
-  .meter span { display:block; height:100%; width:0; background:var(--warning); }
-  .meter span.low { background:var(--success-deep); }
   .controls { display:flex; flex-wrap:wrap; gap:var(--s-sm); }
   button.danger { border-color:var(--error); color:var(--error-deep); }
   button.danger:hover { background:var(--canvas); border-color:var(--error-deep); }
 
-  .log-wrap { max-height:340px; overflow:auto; border:1px solid var(--hairline); border-radius:var(--r-sm); overscroll-behavior:contain; }
+  details.sec { margin-top:var(--s-lg); border:1px solid var(--hairline); border-radius:var(--r-sm); background:var(--canvas); }
+  details.sec > summary { padding:var(--s-sm) var(--s-xl); }
+  details.sec > summary .k { color:var(--ink); }
+  details.sec > .sec-body { padding:0 var(--s-xl) var(--s-lg); }
+  .log-wrap { max-height:320px; overflow:auto; border:1px solid var(--hairline); border-radius:var(--r-sm); overscroll-behavior:contain; }
   .log th { position:sticky; top:0; z-index:1; }
   .log td { font-size:13px; padding:6px 10px; vertical-align:top; }
-  .log td.num { text-align:right; white-space:nowrap; }
+  .log td.num { text-align:right; white-space:nowrap; font-family:var(--mono); font-size:12.5px; }
   .log td.type { font-weight:700; color:var(--ink); white-space:nowrap; }
   .log tr.ev-warn td { background:#fffaf2; }
   .log tr.ev-warn td.type { box-shadow:inset 3px 0 0 var(--warning); }
   .log tr.ev-abort td.type, .log tr.ev-lock td.type { box-shadow:inset 3px 0 0 var(--error); color:var(--error-deep); }
 
-  /* Result */
+  /* Result: verdict first */
+  .verdict-hero { display:grid; grid-template-columns:minmax(0, 1.5fr) minmax(0, 1fr); gap:0; margin-top:var(--s-lg);
+                  border:2px solid var(--ink); border-radius:var(--r-sm); }
+  .verdict-hero > div { padding:var(--s-xl); min-width:0; }
+  .verdict-hero > div + div { border-left:1px solid var(--hairline); }
+  .verdict-main { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-md) var(--s-lg); margin:var(--s-sm) 0 var(--s-md); }
+  #result-verdict { font:700 34px/1.1 var(--mono); letter-spacing:0.02em; padding:var(--s-sm) var(--s-lg); border-width:3px; }
+  .verdict-hero.v-pass { border-color:var(--success-deep); }
+  .verdict-hero.v-fail { border-color:var(--error); }
+  .verdict-hero.v-abort { border-color:var(--warning); }
+  .why { margin:var(--s-md) 0 0; font-size:15px; color:var(--body); }
+  .why strong { color:var(--ink); }
+  #result-reasons { margin:var(--s-xs) 0 0; }
+  .counts { display:flex; flex-wrap:wrap; gap:var(--s-xs); margin:var(--s-md) 0 0; padding:0; list-style:none; }
+  .counts li { font:700 12.5px/1.3 var(--mono); padding:4px 8px; border:1px solid var(--hairline-strong); border-radius:var(--r-sm); }
+  .counts li.c-pass { color:var(--success-deep); border-color:var(--success-deep); }
+  .counts li.c-fail { color:var(--error-deep); border-color:var(--error); }
+  .counts li.c-zero { color:var(--mute); border-color:var(--hairline); }
+  .caution { margin:var(--s-md) 0 0; padding:var(--s-sm) var(--s-md); border:1px solid var(--warning); box-shadow:inset 4px 0 0 var(--warning);
+             font-size:14px; font-weight:700; color:var(--ink); max-width:none; }
+  .encl { display:flex; flex-direction:column; gap:var(--s-sm); }
+  .encl-state { font:700 22px/1.2 var(--mono); padding:var(--s-sm) var(--s-md); border:2px solid var(--hairline-strong); border-radius:var(--r-sm); }
+  .encl-state.safe { border-color:var(--success-deep); color:var(--success-deep); }
+  .encl-state.lock { background:var(--error); border-color:var(--error); color:var(--on-dark); }
+  .encl p { margin:0; font-size:14px; }
+  .encl dl { margin-top:var(--s-sm); }
+  .encl .kv dt, .encl .kv dd { font-size:13.5px; }
+
+  .findings { list-style:none; margin:0; padding:0; }
+  .findings li { padding:var(--s-md) 0; border-top:1px solid var(--hairline); }
+  .findings li:first-child { border-top:none; padding-top:0; }
+  .findings .fv { font:700 20px/1.3 var(--mono); color:var(--error-deep); }
   .results td { font-size:14px; vertical-align:top; }
   .results td.q { min-width:190px; }
   .results td.ch { min-width:220px; }
+  .results td.val { font-family:var(--mono); white-space:nowrap; }
   .results .chip { white-space:nowrap; }
   .results tr.r-main td { border-bottom:none; padding-bottom:var(--s-xs); }
   .results tr.r-reason td { padding-top:0; font-size:13px; line-height:1.45; color:var(--mute); }
   .results tr.r-reason strong { color:var(--body); }
   .results tbody tr:hover td { background:transparent; }
-  .results td .obs { display:block; font-size:12px; color:var(--mute); }
+  .results td .obs { display:block; font-size:12px; color:var(--mute); font-family:var(--font); }
   .results tr.notrun td { color:var(--mute); }
   .hyp { margin:0; padding-left:var(--s-lg); }
   .hyp li { margin:0 0 var(--s-sm); }
 
   /* Report preview */
-  .preview-wrap { margin-top:var(--s-xl); border:1px solid var(--hairline-strong); border-radius:var(--r-sm); background:var(--canvas); }
+  .preview-wrap { margin-top:var(--s-lg); border:1px solid var(--hairline-strong); border-radius:var(--r-sm); background:var(--canvas); }
   .preview { display:block; width:100%; height:min(72vh, 900px); border:0; }
 
   [hidden] { display:none !important; }
 
+  @media (max-width:1100px) {
+    .console { grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); }
+    .console > .abort-box { grid-column:1 / -1; width:auto; flex-direction:row; align-items:center; border-left:none; border-top:1px solid var(--on-dark-faint); }
+    #btn-abort { min-height:56px; flex:0 0 220px; }
+    .setup-layout { grid-template-columns:minmax(0, 1fr); }
+  }
   @media (max-width:900px) {
     .run-grid, .run-grid-even { grid-template-columns:minmax(0, 1fr); }
+    .verdict-hero { grid-template-columns:minmax(0, 1fr); }
+    .verdict-hero > div + div { border-left:none; border-top:1px solid var(--hairline); }
+    .track { grid-template-columns:repeat(6, minmax(0, 1fr)); }
   }
   @media (max-width:640px) {
-    .topbar-inner { padding:var(--s-md) var(--s-lg); }
-    .steps ol { padding:var(--s-sm) var(--s-lg); }
-    main { padding:var(--s-lg) var(--s-lg) var(--s-xxl); }
+    .topbar-inner { padding:var(--s-sm) var(--s-lg); }
+    .steps ol { padding:0 var(--s-lg); display:flex; gap:var(--s-xs); }
+    .steps li { flex:none; padding:0 var(--s-sm) 0 0; }
+    .steps li:not([aria-current]) { font-size:0; gap:0; }
+    .steps li[aria-current="step"] { flex:1; }
+    main { padding:var(--s-lg) var(--s-md) var(--s-xxl); }
     section.screen { padding:var(--s-xl) var(--s-lg); }
-    .grid { grid-template-columns:1fr; gap:var(--s-sm); }
-    .grid label { margin-top:var(--s-sm); padding-top:0; }
+    .grid, .all-scenarios { grid-template-columns:1fr; gap:var(--s-xs); }
+    .grid label, .all-scenarios label { margin-top:var(--s-sm); padding-top:0; }
     input[type=text], select { max-width:none; }
+    .quick { grid-template-columns:1fr; }
     .actions button { flex:1 1 auto; }
     .lamps { grid-template-columns:1fr; }
-    .clock .v { font-size:20px; }
+    .clock .v { font-size:19px; }
+    .console { grid-template-columns:minmax(0, 1fr); }
+    .console > div + div { border-left:none; border-top:1px solid var(--on-dark-faint); }
+    .console > .abort-box { flex-direction:column; align-items:stretch; }
+    #btn-abort { flex:none; }
+    .vbus { font-size:32px; }
+    .track { grid-template-columns:repeat(4, minmax(0, 1fr)); }
+    #result-verdict { font-size:26px; }
+    .verdict-hero > div { padding:var(--s-lg); }
     dialog#limitations { padding:var(--s-xl) var(--s-lg); }
   }
   @media (prefers-reduced-motion:reduce) {
-    * { transition:none !important; }
+    * { transition:none !important; animation:none !important; }
   }
 </style>
 </head>
@@ -313,7 +501,7 @@
 <header class="topbar">
   <div class="topbar-inner">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
       <h1>Virtual IGBT test cell <span>— operator workflow prototype</span></h1>
     </div>
     <span id="profile-badge" class="badge"></span>
@@ -333,41 +521,87 @@
 <main id="app" tabindex="-1">
   <!-- Screen 1: Setup -->
   <section id="screen-setup" class="screen" aria-labelledby="h-setup" hidden>
-    <p class="eyebrow">Screen 1 · Step 1 of 5</p>
-    <h2 id="h-setup" tabindex="-1">Setup</h2>
+    <div class="screen-head">
+      <h2 id="h-setup" tabindex="-1">Setup</h2>
+      <p class="eyebrow">Step 1 of 5 · configure the run</p>
+    </div>
     <div class="meta"><span>Run ID <strong id="run-id" translate="no"></strong></span></div>
-    <div class="grid">
-      <label for="in-module-id">Module ID</label><input type="text" id="in-module-id" name="module_id" autocomplete="off" spellcheck="false">
-      <label for="in-profile">Profile</label>
-      <div class="inline"><select id="in-profile" name="profile"></select> <span id="profile-forced" class="muted" hidden>Set by the scenario</span></div>
-      <label for="in-scenario">Scenario</label>
-      <div><select id="in-scenario" name="scenario"></select><div id="scenario-overrides" class="muted field-note" aria-live="polite"></div></div>
-      <label for="in-seed">Seed</label><input type="text" id="in-seed" name="seed" inputmode="numeric" autocomplete="off" spellcheck="false">
-      <label for="in-noise">Noise</label>
-      <div><select id="in-noise" name="noise"></select><div id="noise-note" class="muted field-note" aria-live="polite"></div></div>
-      <label for="in-speed">Speed</label><select id="in-speed" name="speed"></select>
-      <label for="in-operator">Operator</label><input type="text" id="in-operator" name="operator" autocomplete="off" placeholder="Name or initials…">
-    </div>
 
-    <div id="custom-panel" class="panel" hidden>
-      <h3>Custom module parameters</h3>
-      <p class="muted">Fictional module; values are illustrative. Values are checked by the configuration preflight.</p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th scope="col">Parameter</th><th scope="col">Value</th><th scope="col">Unit</th><th scope="col">Note</th></tr></thead>
-          <tbody id="custom-body"></tbody>
-        </table>
+    <div class="setup-layout">
+      <div>
+        <fieldset>
+          <legend>Scenario</legend>
+          <div class="quick" id="quick-scenarios" role="group" aria-label="Primary demonstration scenarios">
+            <button type="button" data-scenario="S0" aria-pressed="false"><span class="qid">S0</span><span class="qn">Healthy run</span><span class="qd">All stages, safe-state verified</span></button>
+            <button type="button" data-scenario="S4" aria-pressed="false"><span class="qid">S4</span><span class="qn">Interrupted run</span><span class="qd">Door opens during T08a</span></button>
+            <button type="button" data-scenario="S8" aria-pressed="false"><span class="qid">S8</span><span class="qn">Failed discharge</span><span class="qd">Discharge path failure</span></button>
+          </div>
+          <div class="all-scenarios">
+            <label for="in-scenario">All scenarios</label>
+            <div><select id="in-scenario" name="scenario"></select><div id="scenario-overrides" class="muted field-note" aria-live="polite"></div></div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Module and operator</legend>
+          <div class="grid">
+            <label for="in-module-id">Module ID <span class="req">required</span></label>
+            <div><input type="text" id="in-module-id" name="module_id" autocomplete="off" spellcheck="false" aria-required="true" aria-describedby="module-error"><p id="module-error" class="field-error" hidden></p></div>
+            <label for="in-operator">Operator <span class="req">required</span></label>
+            <div><input type="text" id="in-operator" name="operator" autocomplete="off" placeholder="Name or initials…" aria-required="true" aria-describedby="operator-error"><p id="operator-error" class="field-error" hidden></p></div>
+            <label for="in-speed">Animation speed</label>
+            <div><select id="in-speed" name="speed"></select><div class="muted field-note">Changes animation only; estimated physical time is unchanged.</div></div>
+          </div>
+        </fieldset>
+
+        <details class="adv" id="setup-advanced">
+          <summary>Advanced <span class="muted" id="advanced-summary"></span></summary>
+          <div class="adv-body">
+            <div class="grid">
+              <label for="in-profile">Profile</label>
+              <div class="inline"><select id="in-profile" name="profile"></select> <span id="profile-forced" class="muted" hidden>Set by the scenario</span></div>
+              <label for="in-seed">Seed</label><input type="text" id="in-seed" name="seed" inputmode="numeric" autocomplete="off" spellcheck="false">
+              <label for="in-noise">Noise</label>
+              <div><select id="in-noise" name="noise"></select><div id="noise-note" class="muted field-note" aria-live="polite"></div></div>
+            </div>
+          </div>
+        </details>
+
+        <div id="custom-panel" class="panel" hidden>
+          <h3>Custom module parameters</h3>
+          <p class="muted">Fictional module; values are illustrative. Values are checked by the configuration preflight.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th scope="col">Parameter</th><th scope="col">Value</th><th scope="col">Unit</th><th scope="col">Note</th></tr></thead>
+              <tbody id="custom-body"></tbody>
+            </table>
+          </div>
+          <button type="button" id="btn-reset-custom">Reset to defaults</button>
+        </div>
+
+        <div class="actions"><button type="button" class="primary" id="btn-continue">CONTINUE</button>
+          <span class="muted">Runs the configuration preflight. Nothing is energised yet.</span></div>
       </div>
-      <button type="button" id="btn-reset-custom">Reset to defaults</button>
-    </div>
 
-    <div class="actions"><button type="button" class="primary" id="btn-continue">CONTINUE</button></div>
+      <aside class="next" aria-labelledby="h-next">
+        <h3 id="h-next">What happens next</h3>
+        <ol>
+          <li><strong>Configuration preflight</strong> checks every input. Invalid values stop here with no run and no verdict.</li>
+          <li><strong>Pre-check:</strong> interlocks IL1–IL7 must all read OK before START is enabled.</li>
+          <li><strong>Run:</strong> stages T00–T10 in order. The virtual bus is charged from T07. Any abort goes to the safe-state procedure.</li>
+          <li><strong>Result and report:</strong> overall outcome, safe-state status and per-reading evidence, exportable as JSON, HTML or PDF.</li>
+        </ol>
+        <p>All rules are illustrative and not approved. Readings are synthetic.</p>
+      </aside>
+    </div>
   </section>
 
   <!-- Screen 1a: Validation error -->
   <section id="screen-invalid" class="screen" aria-labelledby="h-invalid" hidden>
-    <p class="eyebrow">Screen 1a · Configuration preflight</p>
-    <h2 id="h-invalid" tabindex="-1">Validation error</h2>
+    <div class="screen-head">
+      <h2 id="h-invalid" tabindex="-1">Validation error</h2>
+      <p class="eyebrow">Step 1 · configuration preflight</p>
+    </div>
     <div class="meta" id="invalid-run"></div>
     <p class="alert" id="invalid-count" role="alert"></p>
     <div class="table-wrap">
@@ -377,15 +611,17 @@
       </table>
     </div>
     <div class="actions">
-      <button type="button" class="btn-back">Back to setup</button>
-      <button type="button" class="primary" disabled>START</button>
+      <button type="button" class="btn-back primary">Back to setup</button>
+      <button type="button" disabled>START</button>
     </div>
   </section>
 
   <!-- Screen 1b: Configuration blocked -->
   <section id="screen-blocked" class="screen" aria-labelledby="h-blocked" hidden>
-    <p class="eyebrow">Screen 1b · Configuration preflight</p>
-    <h2 id="h-blocked" tabindex="-1">Configuration blocked</h2>
+    <div class="screen-head">
+      <h2 id="h-blocked" tabindex="-1">Configuration blocked</h2>
+      <p class="eyebrow">Step 1 · configuration preflight</p>
+    </div>
     <div class="meta" id="blocked-run"></div>
     <p class="alert alert-warn" id="blocked-text" role="status"></p>
     <div class="verdict-row"><span>Overall</span> <span class="verdict verdict-ne">NOT EVALUATED</span></div>
@@ -400,33 +636,65 @@
 
   <!-- Screen 2: Pre-check -->
   <section id="screen-precheck" class="screen" aria-labelledby="h-precheck" hidden>
-    <p class="eyebrow">Screen 2 · Step 2 of 5</p>
-    <h2 id="h-precheck" tabindex="-1">Pre-check</h2>
+    <div class="screen-head">
+      <h2 id="h-precheck" tabindex="-1">Pre-check</h2>
+      <p class="eyebrow">Step 2 of 5 · interlocks</p>
+    </div>
     <div class="meta" id="precheck-run"></div>
-    <p class="muted lead">Configuration preflight passed. Every interlock must read OK before START is enabled.</p>
+    <div class="il-summary">
+      <span class="il-count" id="il-count"></span>
+      <span class="st" id="il-state"></span>
+      <p id="il-next"></p>
+    </div>
     <ul class="lamps" id="lamps" aria-label="Interlocks IL1 to IL7"></ul>
     <p class="alert alert-warn" id="precheck-status" role="status" hidden></p>
     <div class="actions">
       <button type="button" class="btn-back">Back to setup</button>
       <button type="button" class="primary" id="btn-start">START</button>
+      <span class="muted">Configuration preflight passed.</span>
     </div>
   </section>
 
   <!-- Screen 3: Run -->
   <section id="screen-run" class="screen" aria-labelledby="h-run" hidden>
-    <p class="eyebrow">Screen 3 · Step 3 of 5</p>
-    <h2 id="h-run" tabindex="-1">Run</h2>
+    <div class="screen-head">
+      <h2 id="h-run" tabindex="-1">Run</h2>
+      <p class="eyebrow">Step 3 of 5 · test sequence</p>
+    </div>
     <div class="meta" id="run-meta"></div>
 
-    <div class="run-head">
-      <div class="state-line"><span class="k">Run state</span> <span id="run-state" class="st"></span></div>
+    <div class="console">
+      <div>
+        <span class="k">Run state</span>
+        <div class="state-line"><span id="run-state" class="st"></span></div>
+        <p class="state-text" id="run-state-text" aria-live="polite"></p>
+        <div class="active-now" id="console-active"></div>
+        <p class="overall-line" id="console-overall" hidden></p>
+      </div>
+      <div>
+        <span class="k">Virtual DC bus</span>
+        <div class="vbus" id="console-vbus"></div>
+        <span class="vbus-tag" id="console-vbus-tag"></span>
+        <div class="meter" aria-hidden="true"><span id="bus-bar"></span><i id="bus-safe-mark"></i></div>
+        <p class="small" id="bus-scale"></p>
+        <div class="tiles" id="console-tiles"></div>
+      </div>
+      <div class="abort-box">
+        <button type="button" class="danger" id="btn-abort">ABORT</button>
+        <p>Abort triggers the safe-state procedure while a stage runs. During that procedure it is logged as a WARNING and ignored.</p>
+      </div>
+    </div>
+
+    <ol class="track" id="stage-track" aria-label="Stage progression"></ol>
+
+    <div class="clockbar">
       <div class="clocks" aria-live="off">
         <div class="clock"><span class="k">Estimated physical time</span><span class="v" id="clock-phys"></span></div>
         <div class="clock"><span class="k">Animation time</span><span class="v" id="clock-anim"></span></div>
         <div class="clock"><span class="k">Speed</span><span class="v" id="clock-speed"></span></div>
       </div>
+      <p class="caption" id="clock-caption"></p>
     </div>
-    <p class="caption" id="clock-caption"></p>
 
     <div class="run-grid">
       <div class="block">
@@ -444,112 +712,135 @@
 
     <div class="run-grid run-grid-even">
       <div class="block">
-        <h3>Bench state</h3>
+        <h3>Bench state detail</h3>
         <dl class="kv" id="bench"></dl>
-        <div class="meter" aria-hidden="true"><span id="bus-bar"></span></div>
-        <p class="muted small" id="bus-scale"></p>
       </div>
       <div class="block">
-        <h3>Demo controls</h3>
+        <h3>Fault injection (demo controls)</h3>
         <p class="muted small">Each control is an abort trigger while a stage runs. During the safe-state procedure it is logged as a WARNING and ignored.</p>
         <div class="controls">
-          <button type="button" class="danger" id="btn-abort">Abort</button>
           <button type="button" class="danger" id="btn-door">Open door</button>
           <button type="button" class="danger" id="btn-heartbeat">Heartbeat loss</button>
         </div>
       </div>
     </div>
 
-    <div class="block block-wide">
-      <h3>Event log</h3>
-      <div class="log-wrap" id="log-wrap" tabindex="0" aria-label="Event log">
-        <table class="log">
-          <thead><tr><th scope="col">#</th><th scope="col">Physical s</th><th scope="col">Animation s</th><th scope="col">Stage</th><th scope="col">Event</th><th scope="col">Detail</th></tr></thead>
-          <tbody id="log-body"></tbody>
-        </table>
+    <details class="sec" id="log-details">
+      <summary><span class="k">Event log</span> <span class="muted" id="log-count"></span></summary>
+      <div class="sec-body">
+        <div class="log-wrap" id="log-wrap" tabindex="0" aria-label="Event log">
+          <table class="log">
+            <thead><tr><th scope="col">#</th><th scope="col">Physical s</th><th scope="col">Animation s</th><th scope="col">Stage</th><th scope="col">Event</th><th scope="col">Detail</th></tr></thead>
+            <tbody id="log-body"></tbody>
+          </table>
+        </div>
       </div>
-    </div>
+    </details>
 
     <div class="actions">
       <button type="button" id="btn-run-new" hidden>New run</button>
       <button type="button" class="primary" id="btn-view-result" disabled>VIEW RESULT</button>
+      <span class="muted" id="run-next"></span>
     </div>
   </section>
 
   <!-- Screen 4: Result -->
   <section id="screen-result" class="screen" aria-labelledby="h-result" hidden>
-    <p class="eyebrow">Screen 4 · Step 4 of 5</p>
-    <h2 id="h-result" tabindex="-1">Result</h2>
+    <div class="screen-head">
+      <h2 id="h-result" tabindex="-1">Result</h2>
+      <p class="eyebrow">Step 4 of 5 · outcome and evidence</p>
+    </div>
     <div class="meta" id="result-meta"></div>
-    <div class="meta" id="result-inputs"></div>
-    <div class="meta" id="result-noise" hidden></div>
 
-    <div class="verdict-block">
-      <div class="verdict-row"><span>Overall</span> <span id="result-verdict" class="verdict"></span></div>
-      <p class="verdict-label" id="result-label"></p>
-      <p class="muted" id="result-precedence"></p>
-      <p class="muted" id="result-reasons"></p>
-    </div>
-
-    <h3 class="section-h">Readings</h3>
-    <div class="table-wrap">
-      <table class="results">
-        <thead><tr><th scope="col">Test</th><th scope="col">Quantity</th><th scope="col">Value</th><th scope="col">Rule</th><th scope="col">Basis · reference · approval</th><th scope="col">Margin</th><th scope="col">Verdict</th></tr></thead>
-        <tbody id="result-body"></tbody>
-      </table>
-    </div>
-
-    <div class="run-grid run-grid-even">
-      <div class="block">
-        <h3>Hypotheses (not diagnoses)</h3>
-        <ul class="hyp" id="result-hyp"></ul>
+    <div class="verdict-hero" id="verdict-hero">
+      <div>
+        <span class="k">Overall outcome</span>
+        <div class="verdict-main"><span id="result-verdict" class="verdict"></span></div>
+        <p class="verdict-label" id="result-label"></p>
+        <p class="why"><strong>Why:</strong> <span id="result-precedence"></span></p>
+        <p class="muted" id="result-reasons"></p>
+        <ul class="counts" id="result-counts" aria-label="Module reading verdicts"></ul>
+        <p class="caution" id="result-caution" hidden></p>
       </div>
-      <div class="block">
-        <h3>Safe state</h3>
+      <div class="encl">
+        <span class="k">Enclosure and safe state</span>
+        <div class="encl-state" id="result-enclosure"></div>
+        <p id="result-enclosure-text"></p>
         <dl class="kv" id="result-safe"></dl>
       </div>
     </div>
 
-    <div class="block block-wide">
-      <h3>Clocks</h3>
-      <div class="clocks">
-        <div class="clock"><span class="k">Estimated physical total</span><span class="v" id="result-phys"></span></div>
-        <div class="clock"><span class="k">Animation total</span><span class="v" id="result-anim"></span></div>
+    <div class="run-grid run-grid-even">
+      <div class="block">
+        <h3>Findings (FAIL readings)</h3>
+        <ul class="findings" id="result-findings"></ul>
       </div>
-      <p class="caption" id="result-caption"></p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th scope="col">Stage</th><th scope="col">Status</th><th scope="col">Physical components</th><th scope="col">Estimate s</th></tr></thead>
-          <tbody id="result-clock-body"></tbody>
-        </table>
+      <div class="block">
+        <h3>Hypotheses (not diagnoses)</h3>
+        <ul class="hyp" id="result-hyp"></ul>
       </div>
     </div>
 
+    <details class="sec" id="evidence-details">
+      <summary><span class="k">Per-reading evidence</span> <span class="muted" id="evidence-summary"></span></summary>
+      <div class="sec-body">
+        <div class="meta" id="result-inputs"></div>
+        <div class="meta" id="result-noise" hidden></div>
+        <div class="table-wrap">
+          <table class="results">
+            <thead><tr><th scope="col">Test</th><th scope="col">Quantity</th><th scope="col">Value</th><th scope="col">Rule</th><th scope="col">Basis · reference · approval</th><th scope="col">Margin</th><th scope="col">Verdict</th></tr></thead>
+            <tbody id="result-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <details class="sec" id="clock-details">
+      <summary><span class="k">Clocks and estimated durations</span> <span class="muted" id="clock-summary"></span></summary>
+      <div class="sec-body">
+        <div class="clocks">
+          <div class="clock"><span class="k">Estimated physical total</span><span class="v" id="result-phys"></span></div>
+          <div class="clock"><span class="k">Animation total</span><span class="v" id="result-anim"></span></div>
+        </div>
+        <p class="caption" id="result-caption"></p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Stage</th><th scope="col">Status</th><th scope="col">Physical components</th><th scope="col">Estimate s</th></tr></thead>
+            <tbody id="result-clock-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
     <div class="actions">
-      <button type="button" id="btn-result-new">New run</button>
-      <button type="button" id="btn-download-json">Download JSON</button>
       <button type="button" class="primary" id="btn-view-report">VIEW REPORT</button>
+      <button type="button" id="btn-download-json">Download JSON</button>
+      <span class="spacer"></span>
+      <button type="button" class="secondary" id="btn-result-new">New run</button>
     </div>
   </section>
 
   <!-- Screen 5: Report -->
   <section id="screen-report" class="screen" aria-labelledby="h-report" hidden>
-    <p class="eyebrow">Screen 5 · Step 5 of 5</p>
-    <h2 id="h-report" tabindex="-1">Report</h2>
+    <div class="screen-head">
+      <h2 id="h-report" tabindex="-1">Report</h2>
+      <p class="eyebrow">Step 5 of 5 · export</p>
+    </div>
     <div class="meta" id="report-meta"></div>
+    <div class="actions actions-top">
+      <button type="button" class="primary" id="btn-report-print">Print / Save PDF</button>
+      <button type="button" id="btn-report-html">Download HTML</button>
+      <button type="button" id="btn-report-json">Download JSON</button>
+      <span class="spacer"></span>
+      <button type="button" id="btn-report-back">Back to result</button>
+      <button type="button" class="secondary" id="btn-report-new">New run</button>
+    </div>
+    <p class="alert alert-warn" id="report-print-note" role="status" hidden></p>
     <p class="muted lead">Preview of the HTML report (05 §10). Print / Save PDF prints this report only; choose “Save as PDF” in the print dialog. The banner and footer repeat on every printed page.</p>
     <div class="preview-wrap">
       <iframe id="report-preview" class="preview" title="HTML report preview"></iframe>
     </div>
     <p class="muted small" id="report-files"></p>
-    <p class="alert alert-warn" id="report-print-note" role="status" hidden></p>
-    <div class="actions">
-      <button type="button" id="btn-report-back">Back to result</button>
-      <button type="button" id="btn-report-new">New run</button>
-      <button type="button" id="btn-report-json">Download JSON</button>
-      <button type="button" id="btn-report-html">Download HTML</button>
-      <button type="button" class="primary" id="btn-report-print">Print / Save PDF</button>
-    </div>
   </section>
 </main>
 

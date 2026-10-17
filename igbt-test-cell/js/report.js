@@ -253,7 +253,7 @@ window.IGBT.report = (function () {
     "html{-webkit-print-color-adjust:exact;print-color-adjust:exact}",
     "body{margin:0;font:400 13px/1.45 Arial,sans-serif;color:#1a1a1a;background:#fff}",
     "h1,h2,h3{color:#000;font-weight:700;line-height:1.25;margin:0}",
-    "h1{font-size:22px}h2{font-size:15px;margin:0 0 8px;padding-top:6px;border-top:2px solid #000}",
+    "h1{font-size:22px;letter-spacing:.01em}h2{font-size:12px;text-transform:uppercase;letter-spacing:.07em;margin:0 0 10px;padding-top:8px;border-top:2px solid #000}",
     ".pbanner{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:center;gap:10px;background:#feeeb2;color:#000;font-weight:700;font-size:13px;text-align:center;padding:7px 12px;border-bottom:1px solid #000}",
     ".pbanner:before{content:\"\";flex:none;width:10px;height:10px;background:#000}",
     ".pfooter{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 16px;background:#000;color:#fff;font-size:11px;padding:7px 12px}",
@@ -262,8 +262,12 @@ window.IGBT.report = (function () {
     ".wrap{max-width:1180px;margin:0 auto;padding:18px 20px 28px}",
     ".title{display:flex;align-items:flex-start;gap:12px;padding-bottom:10px}.mark{flex:none;width:14px;height:14px;margin-top:5px;background:#76b900}",
     ".meta{margin:4px 0 0;color:#5e5e5e;font-size:12px}.meta b{color:#000}",
-    ".sec{margin-top:18px;break-inside:auto}",
-    ".verdict{display:inline-block;font-size:17px;font-weight:700;padding:5px 12px;border:2px solid #5e5e5e;background:#f7f7f7;color:#000}",
+    ".sec{margin-top:22px;break-inside:auto}",
+    ".wrap>section.sec:first-of-type{margin-top:12px;padding:12px 16px 14px;border:2px solid #000;break-inside:avoid}",
+    ".wrap>section.sec:first-of-type h2{border-top:none;padding-top:0}",
+    ".wrap>section.sec:first-of-type p{margin:0 0 4px}",
+    ".sstate{font-weight:700;color:#000}",
+    ".verdict{display:inline-block;margin-left:6px;font:700 22px/1.15 ui-monospace,Consolas,Menlo,monospace;letter-spacing:.02em;padding:5px 14px;border:3px solid #5e5e5e;background:#f7f7f7;color:#000}",
     ".v-pass{border-color:#3f8500;color:#3f8500;background:#fff}.v-fail{border-color:#e52020;color:#650b0b;background:#fff}",
     ".v-abort{border-color:#df6500;background:#fff}.v-ne{border-color:#5e5e5e}",
     ".label{font-weight:700;color:#000;margin:6px 0 2px}.muted{color:#5e5e5e}",
@@ -272,7 +276,7 @@ window.IGBT.report = (function () {
     "th,td{text-align:left;vertical-align:top;padding:5px 7px;border-bottom:1px solid #ccc}",
     "thead th{font-size:10px;text-transform:uppercase;letter-spacing:.02em;color:#5e5e5e;background:#f7f7f7;white-space:nowrap}",
     "thead{display:table-header-group}tr{break-inside:avoid}",
-    "td{font-variant-numeric:tabular-nums}.nw{white-space:nowrap}",
+    "td{font-variant-numeric:tabular-nums}.nw{white-space:nowrap}td.v,td.num{font-family:ui-monospace,Consolas,Menlo,monospace;font-size:12px}",
     ".kv th{width:190px;font-weight:400;color:#5e5e5e;white-space:nowrap}.kv td{font-weight:700;color:#000}",
     ".kv td.plain{font-weight:400;color:#1a1a1a}",
     ".kv td.red{color:#fff;background:#e52020}",
@@ -288,7 +292,7 @@ window.IGBT.report = (function () {
     ".box{border:1px solid #ccc;border-left:4px solid #000;padding:8px 12px;background:#f7f7f7}.box ul{margin:0;padding-left:18px}",
     ".log td{font-size:11.5px}.num{text-align:right;white-space:nowrap}.ty{font-weight:700;color:#000;white-space:nowrap}",
     ".ev-warn td.ty{box-shadow:inset 3px 0 0 #df6500}.ev-red td.ty{box-shadow:inset 3px 0 0 #e52020;color:#650b0b}",
-    ".clocks{display:flex;flex-wrap:wrap;gap:8px 32px;margin:0 0 6px}.clocks b{display:block;font-size:18px;color:#000}",
+    ".clocks{display:flex;flex-wrap:wrap;gap:8px 32px;margin:0 0 6px}.clocks b{display:block;font:700 18px/1.3 ui-monospace,Consolas,Menlo,monospace;color:#000}",
     ".caption{font-size:11.5px;color:#5e5e5e;margin:0 0 8px}",
     ".legend{margin:0 0 10px;padding:0;list-style:none}.legend li{margin:0 0 3px}",
     ".limits{max-width:none}",
@@ -296,7 +300,7 @@ window.IGBT.report = (function () {
     "@media print{",
     "  .pbanner{position:fixed;top:0;left:0;right:0}.pfooter{position:fixed;bottom:0;left:0;right:0}",
     "  .hspace{display:block;height:36px}.fspace{display:block;height:34px}",
-    "  .wrap{max-width:none;padding:6px 0 0}.sec{margin-top:14px}h2{break-after:avoid}",
+    "  .wrap{max-width:none;padding:6px 0 0}.sec{margin-top:14px}h2{break-after:avoid}.title{break-after:avoid}",
     "}"
   ].join("\n");
 
@@ -322,6 +326,7 @@ window.IGBT.report = (function () {
       tag("p", { "class": "label" }, esc(o.verdict_label)) +
       tag("p", { "class": "muted" }, "Precedence: " + esc(o.precedence_reason)) +
       tag("p", { "class": "muted" }, esc(reasons.join(" · "))) +
+      tag("p", { "class": "sstate" }, esc(ss ? "Safe state: " + ss.verification + " · door " + ss.door + " · final state " + ss.final_state : "Safe state: procedure not run")) +
       (ss && ss.final_state === "FAULT_LOCKED" ? tag("p", { "class": "lock" }, esc(D().fixed_texts.fault_locked_banner)) : "")));
 
     // 3. Inputs

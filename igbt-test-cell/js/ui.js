@@ -80,7 +80,9 @@ window.IGBT.ui = (function () {
     });
   }
   function showScreen(id) {
-    SCREENS.forEach(function (s) { $(s).hidden = s !== id; });
+    SCREENS.forEach(function (s) { $(s).hidden = s !== id; $(s).classList.remove("enter"); });
+    void $(id).offsetWidth;   // restart the short entry transition (none under reduced motion)
+    $(id).classList.add("enter");
     if ($("workflow-steps")) setStep(SCREEN_STEP[id] || 1);
     window.scrollTo(0, 0);
     // Move keyboard / screen-reader focus to the new screen's heading
@@ -151,6 +153,26 @@ window.IGBT.ui = (function () {
       if (sc.force_profile) parts.push("force_profile = " + sc.force_profile);
       ov.textContent = parts.length ? "Scenario inputs: " + parts.join("; ") : "Scenario inputs: defaults (no overrides)";
     }
+    // Shortcut buttons mirror the select; Advanced summarises its current values
+    Array.prototype.forEach.call(document.querySelectorAll("#quick-scenarios [data-scenario]"), function (b) {
+      b.setAttribute("aria-pressed", String(b.getAttribute("data-scenario") === $("in-scenario").value));
+    });
+    $("advanced-summary").textContent = "· profile " + $("in-profile").value + (forced ? " (set by scenario)" : "") +
+      " · seed " + $("in-seed").value + " · noise " + $("in-noise").value;
+    if (forced) $("setup-advanced").open = true;
+  }
+  // Required text fields: inline message as well as the configuration preflight (which still checks them)
+  var REQUIRED = [["in-module-id", "module-error", "Enter a module ID."], ["in-operator", "operator-error", "Enter the operator's name or initials."]];
+  function checkRequired(showAll) {
+    var firstBad = null;
+    REQUIRED.forEach(function (f) {
+      var inp = $(f[0]), msg = $(f[1]), bad = inp.value.trim() === "";
+      if (!showAll && !inp.getAttribute("data-touched")) return;
+      inp.setAttribute("aria-invalid", String(bad));
+      msg.hidden = !bad; msg.textContent = bad ? f[2] : "";
+      if (bad && !firstBad) firstBad = inp;
+    });
+    return firstBad;
   }
 
   function buildSetup() {
@@ -180,6 +202,19 @@ window.IGBT.ui = (function () {
     scSel.addEventListener("change", refreshSetup);
     nSel.addEventListener("change", refreshSetup);
     pSel.addEventListener("change", function () { state.userProfile = pSel.value; refreshSetup(); });
+    $("in-seed").addEventListener("input", refreshSetup);
+    // S0 / S4 / S8 shortcuts: set the select and fire its own change handler (no separate scenario logic)
+    Array.prototype.forEach.call(document.querySelectorAll("#quick-scenarios [data-scenario]"), function (b) {
+      b.addEventListener("click", function () {
+        scSel.value = b.getAttribute("data-scenario");
+        scSel.dispatchEvent(new Event("change"));
+      });
+    });
+    REQUIRED.forEach(function (f) {
+      var inp = $(f[0]);
+      inp.addEventListener("blur", function () { inp.setAttribute("data-touched", "1"); checkRequired(false); });
+      inp.addEventListener("input", function () { if (inp.getAttribute("data-touched")) checkRequired(false); });
+    });
     $("btn-continue").addEventListener("click", onContinue);
     $("btn-reset-custom").addEventListener("click", function () { buildCustomTable(); });
     Array.prototype.forEach.call(document.querySelectorAll(".btn-back"), function (b) { b.addEventListener("click", backToSetup); });
@@ -255,6 +290,8 @@ window.IGBT.ui = (function () {
   }
 
   function onContinue() {
+    var bad = checkRequired(true);
+    if (bad) { bad.focus(); return; }
     var setup = readSetup();
     var res = V.configPreflight(setup);
     state.lastResult = { setup: setup, result: res };
@@ -323,6 +360,13 @@ window.IGBT.ui = (function () {
     var open = D.interlocks.filter(function (il) { return !run.interlocks[il.id]; }).map(function (il) { return il.id; });
     $("precheck-status").hidden = allOk;
     $("precheck-status").textContent = allOk ? "" : "START disabled: " + open.join(", ") + " not OK.";
+    var n = D.interlocks.length;
+    $("il-count").textContent = (n - open.length) + " / " + n + " OK";
+    $("il-state").textContent = allOk ? "START enabled" : "START disabled";
+    $("il-state").className = allOk ? "st st-pass" : "st st-fail";
+    $("il-next").textContent = allOk
+      ? "All interlocks read OK. START begins T00. The virtual bus is charged from T07; opening a door or losing the heartbeat during a stage aborts to the safe-state procedure."
+      : "Close or restore " + open.join(", ") + " to enable START.";
   }
   function onStart() {
     var res = SEQ.start(state.run);
@@ -354,6 +398,8 @@ window.IGBT.ui = (function () {
     clear($("log-body")); state.logCount = 0; state.focusKey = null;
     $("btn-view-result").disabled = true;
     $("btn-run-new").hidden = true;
+    $("run-next").textContent = "VIEW RESULT unlocks when the run ends.";
+    buildConsole(run);
     renderRun();
     showScreen("screen-run");
     startTimer();
@@ -363,7 +409,115 @@ window.IGBT.ui = (function () {
     state.report = REP.buildJson(run, { run_id: state.setup.run_id, operator: state.setup.operator });
     $("btn-view-result").disabled = false;
     $("btn-run-new").hidden = run.state === "FAULT_LOCKED";
+    $("run-next").textContent = run.state === "FAULT_LOCKED"
+      ? "Enclosure locked. Review the result; Reset simulation in the red banner is the only exit."
+      : "Run ended. Review the result.";
     renderRun();
+  }
+
+  // ---- Run console: state in words, active test, bus, bench tiles, stage track (display only) ----
+  function isClosing(st) { return st["class"] === "CLOSING"; }
+  // Safe-state status of the closing stage. Q18 (gate OFF) passing does not verify the safe state; SS8 does.
+  function safeStatus(run) {
+    var s = run.safe;
+    if (!s) return null;
+    if (!s.verified_done) return { text: "VERIFYING", long: "SAFE STATE: VERIFYING", cls: "st st-warn", t: "t-run" };
+    if (s.verification === "VERIFIED") return { text: "VERIFIED", long: "SAFE STATE VERIFIED", cls: "st st-pass", t: "t-pass" };
+    return { text: "LOCKED", long: "NOT VERIFIED · LOCKED", cls: "st st-lock", t: "t-lock" };
+  }
+  var TRACK_TEXT = { PENDING: ["PENDING", ""], NOT_RUN: ["NOT RUN", "t-skip"], NOT_APPLICABLE: ["N/A", "t-skip"],
+                     NOT_MODELLED: ["NOT MODELLED", "t-skip"], INTERRUPTED: ["INTERRUPTED", "t-warn"], BLOCKED: ["BLOCKED", "t-warn"] };
+  function buildConsole(run) {
+    var track = clear($("stage-track"));
+    run.stages.forEach(function (st) {
+      track.appendChild(el("li", { "data-stage": st.test_id }, [
+        el("span", { class: "tid", text: st.test_id }), el("span", { class: "ts" }), el("span", { class: "tbar", "aria-hidden": "true" })]));
+    });
+    var a = clear($("console-active"));
+    a.appendChild(el("div", null, [el("span", { class: "id", id: "ca-id" }), el("span", { class: "nm", id: "ca-name" })]));
+    a.appendChild(el("p", { class: "sub", id: "ca-sub" }));
+    a.appendChild(el("div", { class: "cbar", "aria-hidden": "true" }, [el("span", { id: "ca-bar" })]));
+    var bc = run.inputs.bench_conditions;
+    $("bus-safe-mark").style.left = Math.max(0, Math.min(100, 100 * bc.v_safe_v / bc.v_dc_test_v)) + "%";
+  }
+  function trackInfo(run, st, isActive, prog) {
+    if (isClosing(st) && run.safe) return safeStatus(run);
+    if (isActive) return { text: prog !== null ? Math.round(prog * 100) + "%" : "RUNNING", t: "t-run" };
+    if (st.status === "DONE") {
+      var v = stageVerdict(st);
+      return v === "PASS" ? { text: "PASS", t: "t-pass" } : v === "FAIL" ? { text: "FAIL", t: "t-fail" } : { text: "DONE", t: "t-done" };
+    }
+    var m = TRACK_TEXT[st.status] || [st.status.replace(/_/g, " "), ""];
+    return { text: m[0], t: m[1] };
+  }
+  function renderTrack(run) {
+    var active = SEQ.activeStage(run), prog = SEQ.stageProgress(run);
+    Array.prototype.forEach.call($("stage-track").children, function (li, i) {
+      var st = run.stages[i], isActive = !!active && active.test_id === st.test_id, info = trackInfo(run, st, isActive, prog);
+      li.className = info.t || "";
+      li.querySelector(".ts").textContent = info.text;
+      li.querySelector(".tbar").style.width = isActive && prog !== null ? Math.round(prog * 100) + "%" : "0";
+      li.setAttribute("aria-label", st.test_id + " " + st.name + ": " + info.text);
+      if (isActive) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
+    });
+  }
+  function stateSentence(run) {
+    var s = run.safe, a = SEQ.activeStage(run);
+    switch (run.state) {
+      case "PRECHECK": return "Waiting for START.";
+      case "RUNNING": return "Test sequence running" + (a ? " (" + a.test_id + ")" : "") + ". ABORT, an opened door or heartbeat loss starts the safe-state procedure.";
+      case "SAFE_STATE_PROCEDURE":
+        if (s && s.locked) return D.fixed_texts.fault_locked_banner + ".";
+        if (s && s.verified_done) return "Discharge verified by the independent meter. Door unlocked; closing T10.";
+        return "Safe-state procedure: gate OFF, HV source disabled, contactor open. The door stays locked until the independent meter verifies v_bus ≤ v_safe.";
+      case "SAFE": return "Run ended. Safe state verified; door unlocked.";
+      case "FAULT_LOCKED": return D.fixed_texts.fault_locked_banner + ". Reset simulation is the only exit; a real bench would need qualified intervention.";
+      case "ENDED": return "Run ended before the bus was charged.";
+      case "RESET": return "Simulation reset.";
+    }
+    return "";
+  }
+  function tile(label, value, cls) {
+    return el("div", { class: "tile" + (cls ? " " + cls : "") }, [el("span", { class: "k", text: label }), el("b", { text: value })]);
+  }
+  function renderConsole(run) {
+    $("run-state-text").textContent = stateSentence(run);
+    var st = SEQ.activeStage(run), prog = SEQ.stageProgress(run);
+    if (st) {
+      var def = E.stageDef(st.test_id);
+      $("ca-id").textContent = st.test_id;
+      $("ca-name").textContent = st.name;
+      $("ca-sub").textContent = st["class"] + " · " + def.excitation + (prog !== null ? " · " + Math.round(prog * 100) + "%" : "");
+      $("ca-bar").style.width = (prog !== null ? Math.round(prog * 100) : 0) + "%";
+    } else {
+      $("ca-id").textContent = run.state === "PRECHECK" ? "—" : "END";
+      $("ca-name").textContent = run.state === "PRECHECK" ? "Not started" : "Sequence finished";
+      $("ca-sub").textContent = run.state === "PRECHECK" ? "" : "Final state " + run.state.replace(/_/g, " ");
+      $("ca-bar").style.width = run.state === "PRECHECK" ? "0" : "100%";
+    }
+    // Overall appears only once the run has ended (rolled up by the engine), never before
+    var o = run.overall, ov = $("console-overall");
+    ov.hidden = !o;
+    ov.textContent = o ? "Overall: " + o.verdict_label : "";
+
+    var b = SEQ.bench(run), bc = run.inputs.bench_conditions, s = run.safe, tag = $("console-vbus-tag");
+    clear($("console-vbus")).appendChild(document.createTextNode(F.fixed(b.v_bus_v, 1)));
+    $("console-vbus").appendChild(el("small", { text: "V" }));
+    var tagText, tagCls;
+    if (s && s.locked) { tagText = "Discharge NOT verified"; tagCls = "lock"; }
+    else if (s && !s.verified_done && s.required) { tagText = "Discharge commanded · verifying"; tagCls = "hot"; }
+    else if (s && s.verified_done) { tagText = "Verified ≤ v_safe " + F.num(bc.v_safe_v) + " V"; tagCls = "low"; }
+    else if (b.v_bus_v > bc.v_safe_v) { tagText = "Energised · above v_safe"; tagCls = "hot"; }
+    else { tagText = "≤ v_safe " + F.num(bc.v_safe_v) + " V"; tagCls = "low"; }
+    tag.textContent = tagText; tag.className = "vbus-tag " + tagCls;
+
+    var open = D.interlocks.filter(function (il) { return !run.interlocks[il.id]; }).map(function (il) { return il.id; });
+    var tiles = clear($("console-tiles"));
+    tiles.appendChild(tile("HV source", b.source_enabled ? "ENABLED" : "DISABLED", b.source_enabled ? "hot" : "safe"));
+    tiles.appendChild(tile("Contactor", b.contactor_closed ? "CLOSED" : "OPEN", b.contactor_closed ? "hot" : "safe"));
+    tiles.appendChild(s && s.locked ? tile("Door", "LOCKED · FAULT", "lock") : tile("Door", b.door_locked ? "LOCKED" : "UNLOCKED", b.door_locked ? "" : "safe"));
+    tiles.appendChild(tile("Gate", b.gate_cmd + " · " + F.fixed(b.gate_meas_v, 1) + " V", ""));
+    tiles.appendChild(tile("Interlocks", open.length ? open.join(", ") + " OPEN" : "IL1–IL7 OK", open.length ? "lock" : "safe"));
   }
 
   var STATE_CLASS = { RUNNING: "st st-run", SAFE_STATE_PROCEDURE: "st st-warn", SAFE: "st st-pass", FAULT_LOCKED: "st st-lock", ENDED: "st", RESET: "st" };
@@ -375,6 +529,8 @@ window.IGBT.ui = (function () {
     rs.className = STATE_CLASS[run.state] || "st";
     $("clock-phys").textContent = sec(run.t);
     $("clock-anim").textContent = sec(run.t / run.inputs.speed);
+    renderConsole(run);
+    renderTrack(run);
     renderStageList(run);
     renderActive(run);
     renderReadings(run);
@@ -390,8 +546,12 @@ window.IGBT.ui = (function () {
     run.stages.forEach(function (st) {
       var isActive = !!active && active.test_id === st.test_id;
       var stat = el("span", { class: "stat" }, [el("span", { class: statusClass(st.status), text: st.status.replace(/_/g, " ") })]);
-      var v = stageVerdict(st);
-      if (v) stat.appendChild(verdictChip(v));
+      var v = stageVerdict(st), ss = isClosing(st) ? safeStatus(run) : null;
+      if (ss) {
+        // Closing stage: show the safe-state status, not a bare stage PASS (Q18 alone does not verify the safe state)
+        stat.appendChild(el("span", { class: ss.cls, text: ss.long }));
+        if (v === "FAIL") stat.appendChild(verdictChip(v));
+      } else if (v) stat.appendChild(verdictChip(v));
       var li = el("li", { class: (isActive ? "active" : "") + (st.status === "NOT_APPLICABLE" || st.status === "NOT_MODELLED" ? " skipped" : "") }, [
         el("span", { class: "id", text: st.test_id }),
         el("span", { class: "nm", text: st.name }),
@@ -440,6 +600,7 @@ window.IGBT.ui = (function () {
     var box = clear($("reading-cards")), eq = $("equation");
     $("readings-of").textContent = st ? "· " + st.test_id : "";
     if (!st) { box.appendChild(el("p", { class: "empty", text: "No readings yet. Readings appear when a stage with module readings completes." })); eq.hidden = true; return; }
+    if (isClosing(st)) box.appendChild(el("p", { class: "note-box", text: "These readings check the gate only. The safe state is decided by discharge verification (SS8), shown in the console above." }));
     st.readings.forEach(function (r) {
       var u = unitOf(r);
       box.appendChild(el("div", { class: "rcard" }, [
@@ -496,6 +657,7 @@ window.IGBT.ui = (function () {
       ]));
     }
     state.logCount = run.events.length;
+    $("log-count").textContent = "· " + run.events.length + " events, both clocks";
     if (nearBottom) wrap.scrollTop = wrap.scrollHeight;
   }
 
@@ -518,13 +680,55 @@ window.IGBT.ui = (function () {
     $("result-noise").textContent = "Noise: " + REP.text.noiseText(det.inputs);
     var v = $("result-verdict");
     v.textContent = o.verdict; v.className = VERDICT_CLASS[o.verdict] || "verdict verdict-ne";
+    $("verdict-hero").className = "verdict-hero " + ({ PASS: "v-pass", FAIL: "v-fail", ABORTED: "v-abort", INCOMPLETE: "v-abort" }[o.verdict] || "");
     $("result-label").textContent = o.verdict_label;
-    $("result-precedence").textContent = "Precedence: " + o.precedence_reason;
+    $("result-precedence").textContent = o.precedence_reason;
     var reasons = [];
     if (o.block_reason) reasons.push("block_reason: " + o.block_reason);
     if (o.abort_reason) reasons.push("abort_reason: " + o.abort_reason);
     reasons.push("is_acceptance_decision: false");
     $("result-reasons").textContent = reasons.join(" · ");
+
+    // Reading counts (from the report), and a caution when no reading failed yet the outcome is not a pass
+    var counts = {}, all = [], fails = [];
+    det.stages.forEach(function (st) { st.readings.forEach(function (r) { counts[r.verdict] = (counts[r.verdict] || 0) + 1; all.push(r); if (r.verdict === "FAIL") fails.push({ st: st, r: r }); }); });
+    var cl = clear($("result-counts"));
+    [["PASS", "c-pass"], ["FAIL", "c-fail"], ["NOT RUN", ""], ["INFO", ""]].forEach(function (c) {
+      var n = counts[c[0]] || 0;
+      if (n || c[0] === "FAIL") cl.appendChild(el("li", { class: n ? c[1] : "c-zero", text: n + " " + c[0] + (c[0] === "INFO" ? " (not judged)" : "") }));
+    });
+    var ss = det.safe_state, locked = !!ss && ss.final_state === "FAULT_LOCKED";
+    var caution = $("result-caution");
+    caution.hidden = !(o.verdict !== "PASS" && o.verdict !== "FAIL" && !fails.length && counts.PASS);
+    caution.textContent = caution.hidden ? "" : "No module reading failed, but this is not a pass: " +
+      (locked ? "the safe state was not verified and the enclosure stays locked." : "the run did not complete its required tests.") +
+      " Passing module checks are not an acceptance conclusion.";
+
+    // Enclosure and safe state, next to the verdict
+    var enc = $("result-enclosure"), encText = $("result-enclosure-text"), vs = det.inputs.bench_conditions.v_safe_v;
+    if (!ss) { enc.textContent = "NOT RUN"; enc.className = "encl-state"; encText.textContent = "Safe-state procedure not run."; }
+    else if (locked) {
+      enc.textContent = "ENCLOSURE LOCKED"; enc.className = "encl-state lock";
+      encText.textContent = D.fixed_texts.fault_locked_banner + ". Verification " + ss.verification + "; v_bus " + F.fixed(ss.v_bus_at_verification_v, 2) + " V at verification (v_safe " + F.num(vs) + " V).";
+    } else {
+      enc.textContent = "DOOR " + ss.door; enc.className = "encl-state" + (ss.final_state === "SAFE" ? " safe" : "");
+      encText.textContent = "Safe state " + ss.verification + " by the independent meter: v_bus " + F.fixed(ss.v_bus_at_verification_v, 2) + " V ≤ v_safe " + F.num(vs) + " V.";
+    }
+
+    var fl = clear($("result-findings"));
+    if (!fails.length) fl.appendChild(el("li", { class: "muted", text: "No FAIL reading recorded" + (counts["NOT RUN"] ? "; " + counts["NOT RUN"] + " reading(s) not run." : ".") }));
+    fails.forEach(function (f) {
+      var u = unitOf(f.r);
+      fl.appendChild(el("li", null, [
+        el("div", { class: "rcard-top" }, [el("span", { class: "rcard-label", text: f.st.test_id + " · " + f.r.quantity_id + " · " + f.r.label }), verdictChip("FAIL")]),
+        el("div", { class: "fv", text: valueText(f.r) + (u ? " " + u : "") }),
+        el("p", { class: "rcard-rule", text: "Rule: " + ruleText(f.r) + " · margin " + marginText(f.r) }),
+        chipsFor(f.r)
+      ]));
+    });
+    $("evidence-summary").textContent = "· " + all.length + " readings: value, rule, basis, case reference, approval status (NOT APPROVED), margin, reason";
+    $("evidence-details").open = false;
+    $("clock-details").open = false;
 
     var body = clear($("result-body"));
     det.stages.forEach(function (st) {
@@ -533,7 +737,7 @@ window.IGBT.ui = (function () {
         body.appendChild(el("tr", { class: "r-main" + dim }, [
           el("td", null, [el("strong", { text: st.test_id }), el("span", { class: "obs", text: st.status.replace(/_/g, " ") })]),
           el("td", { class: "q" }, [el("strong", { text: r.quantity_id }), el("span", { class: "obs", text: r.label })]),
-          el("td", null, [valueText(r) + (u && r.value !== null ? " " + u : ""), r.observation !== "OBSERVED" ? el("span", { class: "obs", text: r.observation }) : null]),
+          el("td", { class: "val" }, [valueText(r) + (u && r.value !== null ? " " + u : ""), r.observation !== "OBSERVED" ? el("span", { class: "obs", text: r.observation }) : null]),
           el("td", { text: ruleText(r) }),
           el("td", { class: "ch" }, [chipsFor(r)]),
           el("td", { text: marginText(r) }),
@@ -551,7 +755,7 @@ window.IGBT.ui = (function () {
       hyp.appendChild(el("li", { text: (h.source === "SAFE_STATE" ? "Safe state" : h.source + " (" + h.quantity_ids.join(", ") + ")") + ": " + h.text }));
     });
 
-    var dl = clear($("result-safe")), ss = det.safe_state;
+    var dl = clear($("result-safe"));
     if (!ss) dl.appendChild(el("dd", { class: "muted", text: "Safe-state procedure not run." }));
     else [["Trigger", ss.trigger + (o.abort_reason && ss.trigger === "ABORT" ? " (" + o.abort_reason + ")" : "")],
           ["Gate", "commanded OFF · measured " + F.fixed(ss.gate_measured_v, 1) + " V · " + (ss.gate_off_confirmed ? "confirmed" : "NOT confirmed")],
@@ -568,6 +772,7 @@ window.IGBT.ui = (function () {
     $("result-phys").textContent = sec(det.physical_total_s);
     $("result-anim").textContent = sec(rep.presentation.animation_total_s) + " at " + det.inputs.speed + "×";
     $("result-caption").textContent = rep.presentation.clock_caption;
+    $("clock-summary").textContent = "· estimated physical " + sec(det.physical_total_s) + " · animation " + sec(rep.presentation.animation_total_s);
     var cb = clear($("result-clock-body"));
     det.stages.forEach(function (st) {
       var comps = st.physical_components.map(function (c) { return c.basis + " " + F.num(c.seconds) + " s" + (c.note ? " (" + c.note + ")" : ""); }).join(" + ");

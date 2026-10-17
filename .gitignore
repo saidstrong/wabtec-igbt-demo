@@ -12,3 +12,11 @@ graphify-out/
 dist/
 # Obsidian vault settings (not part of the app)
 .obsidian/
+# Hosting output and local credentials
+/public/
+node_modules/
+.vercel/
+.env
+.env.*
+!.env.example
+source-files.json

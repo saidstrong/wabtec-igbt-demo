@@ -417,22 +417,41 @@ window.IGBT.selfcheck = (function () {
     var parsed = JSON.parse(REP.serialise(r));
     var ok = ss.door === "LOCKED" && ss.final_state === "FAULT_LOCKED" && ev(d, "DOOR_UNLOCKED").length === 0 && ev(d, "FAULT_LOCKED").length === 1 &&
       d.overall.verdict === "ABORTED" && d.overall.abort_reason === "SAFE_STATE_NOT_VERIFIED" && parsed.simulation === true &&
-      html.indexOf("<p class=\"lock\">" + D.fixed_texts.fault_locked_banner + "</p>") >= 0;
+      // Presentation update (Said, 18 Oct): no red banner in the report; enclosure state is on the enclosure block
+      html.indexOf("data-door=\"LOCKED\" data-final-state=\"FAULT_LOCKED\"") >= 0 && html.indexOf("Door LOCKED") >= 0;
     return { pass: ok, detail: "door " + ss.door + " · " + ss.final_state + " · " + d.overall.verdict + " (" + d.overall.abort_reason + ") · JSON and HTML build" };
+  });
+
+  // Section B: the bench-status line comes from the recorded safe-state fields, not from generated text
+  add("Report B: bench status rendered from recorded fields beside generated text (S1, S8b)", function () {
+    var ai = { model: "MOCK", generated_local: "-", summary: "Generated summary.", items: [] }, bad = [];
+    var want = { S1: "Bench status (recorded, not generated): final state SAFE · discharge verified · bus 0.00 V at verification · enclosure door UNLOCKED.",
+      S8b: "Bench status (recorded, not generated): final state FAULT LOCKED · discharge not verified · verification meter unavailable; not measured · bus not measured (verification unavailable) · model estimate 40.94 V · enclosure door LOCKED." };
+    Object.keys(want).forEach(function (id) {
+      var html = REP.buildHtml(rep(id), { ai: ai }), none = REP.buildHtml(rep(id));
+      if (html.indexOf("<p class=\"bench\" data-bench=\"recorded\">" + htmlEsc(want[id]) + "</p>") < 0) bad.push(id + " line");
+      if (/simulat/i.test(want[id])) bad.push(id + " wording");
+      if (none.indexOf("data-bench") >= 0) bad.push(id + " shown without AI");
+    });
+    return { pass: !bad.length, detail: bad.length ? "missing: " + bad.join(", ") : "bench line from fields; absent when no AI text" };
   });
 
   // ---- HTML report checks (05 §10; AC-06, AC-07, AC-08) ----
   function htmlEsc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
   function rowHtml(html, re) { var m = html.match(re); return m ? m[0] : null; }
   S12_IDS.forEach(function (id) {
-    add("HTML " + id + ": banner, footer, limitations, chip legend; no script, no URL", function () {
-      var html = REP.buildHtml(rep(id)), miss = [];
-      [D.fixed_texts.banner, D.fixed_texts.report_footer, D.fixed_texts.limitations, D.fixed_texts.clock_caption].forEach(function (t) { if (html.indexOf(htmlEsc(t)) < 0) miss.push(t.slice(0, 24) + "…"); });
-      D.fixed_texts.chip_legend.forEach(function (c) { if (html.indexOf(htmlEsc(c.chip)) < 0 || html.indexOf(htmlEsc(c.meaning)) < 0) miss.push(c.chip); });
+    // Presentation update (Said, 18 Oct): banner, footer, limitations prose and chip legend are no longer printed in the
+    // HTML report (they remain in the JSON: simulation_banner, limitations). Kept: identification, sections A/B, no script/URL.
+    add("HTML " + id + ": run identification, sections A and B; no script, no URL", function () {
+      var r = rep(id), html = REP.buildHtml(r), miss = [];
+      [r.metadata.run_id, r.deterministic.inputs.module_parameters.module_id, "v" + r.metadata.software_version, "A. Test results", "B. AI analysis"].forEach(function (t) {
+        if (html.indexOf(htmlEsc(t)) < 0) miss.push(t);
+      });
       var bad = /<script/i.test(html) || /https?:/i.test(html) || /\bsrc=/i.test(html);
-      return { pass: !miss.length && !bad, detail: (miss.length ? "missing: " + miss.join(", ") : "all fixed texts present") + (bad ? "; script/URL found" : "; no script, no URL") + "; " + html.length + " characters" };
+      return { pass: !miss.length && !bad, detail: (miss.length ? "missing: " + miss.join(", ") : "identification and sections present") + (bad ? "; script/URL found" : "; no script, no URL") + "; " + html.length + " characters" };
     });
-    add("AC-06 " + id + ": every JSON stage and reading has an HTML row with the same ID, status, value, verdict and chips", function () {
+    // Presentation update (Said, 18 Oct): provenance chips and reason prose are no longer printed per row.
+    add("AC-06 " + id + ": every JSON stage and reading has an HTML row with the same ID, status, value and verdict", function () {
       var r = rep(id), html = REP.buildHtml(r), bad = [], n = 0;
       r.deterministic.stages.forEach(function (s) {
         if (html.indexOf("data-stage=\"" + s.test_id + "\" data-status=\"" + s.status + "\"") < 0) bad.push(s.test_id + " status");
@@ -441,20 +460,22 @@ window.IGBT.selfcheck = (function () {
           var tr = rowHtml(html, new RegExp("<tr class=\"rd(?: nr)?\" data-q=\"" + x.quantity_id + "\" data-verdict=\"" + x.verdict + "\">.*?</tr>"));
           if (!tr) { bad.push(x.quantity_id + " row/verdict"); return; }
           if (tr.indexOf("<td class=\"v num\">" + htmlEsc(T().valueText(x)) + "</td>") < 0) bad.push(x.quantity_id + " value");
-          T().chipTexts(x).forEach(function (c) { if (tr.indexOf(">" + htmlEsc(c) + "</span>") < 0) bad.push(x.quantity_id + " chip " + c); });
-          if (html.indexOf(htmlEsc(x.reason)) < 0) bad.push(x.quantity_id + " reason");
         });
       });
       return { pass: !bad.length && n > 0, detail: bad.length ? "mismatch: " + bad.join(", ") : n + " readings and " + r.deterministic.stages.length + " stages agree" };
     });
-    add("AC-08 " + id + ": every event row shows physical and animation time = physical / speed", function () {
-      var r = rep(id), html = REP.buildHtml(r), sp = r.deterministic.inputs.speed, F = window.IGBT.models.fmt, bad = [];
-      r.deterministic.events.forEach(function (e) {
-        var tr = rowHtml(html, new RegExp("<tr( class=\"[^\"]*\")? data-seq=\"" + e.seq + "\">.*?</tr>"));
-        var want = "<td class=\"num\">" + F.fixed(e.physical_time_s, 2) + "</td><td class=\"num\">" + F.fixed(e.physical_time_s / sp, 2) + "</td>";
-        if (!tr || tr.indexOf(want) < 0) bad.push(e.seq);
+    // Presentation update (Said, 18 Oct): the event log is no longer printed in the HTML report; the app's event log shows
+    // both clocks. Kept as a functional check on the JSON events and the shared clock helper.
+    add("AC-08 " + id + ": every event has a physical time; animation = physical / speed (JSON + shared helper)", function () {
+      var r = rep(id), d = r.deterministic, sp = d.inputs.speed, bad = [], last = -1;
+      d.events.forEach(function (e) {
+        var t = e.physical_time_s;
+        if (typeof t !== "number" || !isFinite(t) || t < last || e.hasOwnProperty("animation_time_s")) bad.push(e.seq);
+        else last = t;
+        if (T().animationOf(t, sp) !== window.IGBT.engine.r2(t / sp)) bad.push(e.seq + " anim");
       });
-      return { pass: !bad.length, detail: bad.length ? "wrong rows: " + bad.join(", ") : r.deterministic.events.length + " events at speed " + sp };
+      var totalOk = r.presentation.animation_total_s === T().animationOf(d.physical_total_s, sp);
+      return { pass: !bad.length && totalOk, detail: bad.length ? "wrong events: " + bad.join(", ") : d.events.length + " events at speed " + sp + (totalOk ? "; animation total agrees" : "; animation total differs") };
     });
   });
 
@@ -878,8 +899,44 @@ window.IGBT.selfcheck = (function () {
     var none = ["DISCHARGE_VERIFIED", "DISCHARGE_FAILED", "DOOR_UNLOCKED"].filter(function (t) { return ev(d, t).length; });
     var html = REP.buildHtml(r);
     var ok = eq(seq, ["VERIFICATION_UNAVAILABLE", "FAULT_LOCKED"]) && none.length === 0 && d.safe_state.door === "LOCKED" &&
-      d.safe_state.final_state === "FAULT_LOCKED" && ev(d, "DISCHARGE_START").length === 1 && html.indexOf(D.fixed_texts.fault_locked_banner) >= 0;
+      d.safe_state.final_state === "FAULT_LOCKED" && ev(d, "DISCHARGE_START").length === 1 &&
+      html.indexOf("data-final-state=\"FAULT_LOCKED\" data-verification=\"VERIFICATION_UNAVAILABLE\"") >= 0 && html.indexOf("at verification") < 0;
     return { pass: ok, detail: seq.join(" → ") + "; unexpected: " + (none.join(", ") || "none") + "; door " + d.safe_state.door + "; HTML " + html.length + " chars" };
+  });
+
+  // ---- Operator flow (18 Oct): random supported preset per new test, 16× playback; verdicts stay engine-derived ----
+  var UIX = window.IGBT.ui;
+  add("Operator flow: preset pool = built presets, no Custom, no configuration-blocked profile", function () {
+    var pool = UIX.presetPool(D), want = D.scenarios.filter(function (s) {
+      return D.built_priorities.indexOf(s.priority) >= 0 && !s.custom && !s.force_profile; }).map(function (s) { return s.scenario_id; });
+    var ok = eq(pool, want) && pool.indexOf("CUSTOM") < 0 && pool.indexOf("S5") < 0 &&
+      pool.every(function (id) { return D.built_priorities.indexOf(V.findScenario(id).priority) >= 0; }) && pool.length >= 5;
+    return { pass: ok, detail: pool.join(", ") };
+  });
+  add("Operator flow: pickPreset covers every pool member and stays in the pool", function () {
+    var pool = UIX.presetPool(D), seen = {}, ok = true;
+    pool.forEach(function (_, i) { var id = UIX.pickPreset(D, function () { return (i + 0.5) / pool.length; }); seen[id] = true; ok = ok && id === pool[i]; });
+    [0, 0.999999, 1].forEach(function (r) { ok = ok && pool.indexOf(UIX.pickPreset(D, function () { return r; })) >= 0; });
+    for (var k = 0; k < 200; k++) ok = ok && pool.indexOf(UIX.pickPreset(D)) >= 0;
+    return { pass: ok && Object.keys(seen).length === pool.length, detail: Object.keys(seen).length + " of " + pool.length + " reachable; 200 random draws in pool" };
+  });
+  add("Operator flow: default playback is 16× and a supported speed", function () {
+    return { pass: UIX.DEFAULT_SPEED === 16 && D.speeds.indexOf(16) >= 0, detail: UIX.DEFAULT_SPEED + "× in [" + D.speeds.join(", ") + "]" };
+  });
+  add("Operator flow: every preset at 16× preflights OK, records scenario_id/seed/speed, and repeats identically", function () {
+    var bad = [];
+    UIX.presetPool(D).forEach(function (id) {
+      var st = setup({ scenario_id: id }); st.speed = UIX.DEFAULT_SPEED;
+      var pre = V.configPreflight(st);
+      if (pre.status !== "OK") { bad.push(id + " " + pre.status); return; }
+      var a = REP.buildJson(SEQ.runToEnd(SEQ.create(pre)), { run_id: "RUN-SELFCHECK", operator: "selfcheck" });
+      var b = REP.buildJson(SEQ.runToEnd(SEQ.create(V.configPreflight(st))), { run_id: "RUN-SELFCHECK", operator: "selfcheck" });
+      var i = a.deterministic.inputs;
+      if (i.scenario_id !== id || i.seed !== st.seed || i.speed !== 16) bad.push(id + " inputs");
+      if (JSON.stringify(a.deterministic) !== JSON.stringify(b.deterministic)) bad.push(id + " not reproducible");
+      if (a.deterministic.overall.verdict !== rep(id).deterministic.overall.verdict) bad.push(id + " verdict differs from speed-8 run");
+    });
+    return { pass: !bad.length, detail: bad.length ? bad.join("; ") : UIX.presetPool(D).length + " presets OK at 16×" };
   });
 
   function run() {

@@ -4,32 +4,56 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Offline virtual prototype of an IGBT phase-module bench test cell: operator workflow, sequencing, safety behaviour and reporting. Simulated data only.">
-<meta name="color-scheme" content="light">
-<meta name="theme-color" content="#000000">
-<title>IGBT Test Cell — Virtual Prototype (SIMULATION)</title>
+<meta name="color-scheme" content="light dark">
+<script src="js/theme.js"></script>
+<title>IGBT Test Cell</title>
 <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAMklEQVR42mNgGAWDCpTtJIz+EwFGLRi1YNSCUQsoseA/lcCoBaMWjFowagElFoyCAQEAswS1rDXX+5EAAAAASUVORK5CYII=">
 <style>
-  /* Tokens from DESIGN.md (NVIDIA-style system, adapted for this offline app). */
+  /* Tokens: warm off-white page, white surfaces, graphite text, subtle grey borders and one restrained green
+     accent (primary action, progress, current step). Status colours only for operational states. */
   :root {
-    --primary:#76b900; --primary-dark:#5a8d00; --on-primary:#000000;
-    --ink:#000000; --body:#1a1a1a; --mute:#757575; --stone:#898989; --ash:#a7a7a7;
-    --canvas:#ffffff; --surface-soft:#f7f7f7; --surface-dark:#000000; --surface-elevated:#1a1a1a;
-    --hairline:#cccccc; --hairline-strong:#5e5e5e; --on-dark:#ffffff; --on-dark-mute:rgba(255,255,255,0.7);
+    /* Lime accent (from #76B900): button fill with graphite text; a darker edge keeps 3:1 against the page;
+       --accent-text is the small-text companion on light surfaces (5.1:1 or more). Status green (PASS, unlocked) is a
+       cooler teal so it never reads as the accent. */
+    --primary:#76b900; --primary-dark:#6aa600; --on-primary:#1f2412; --primary-edge:#5f9400; --progress-edge:#558500;
+    --accent-soft:#eef5dc; --accent-text:#4a7300;
+    --ink:#23262b; --body:#2b2e33; --label:#3d4046; --mute:#676a70; --stone:#86888c; --ash:#b2b2b0;
+    --page:#f6f4ef; --canvas:#ffffff; --surface-soft:#f4f2ed; --surface-dark:#23262b; --surface-elevated:#2c2e33;
+    --hairline:#e6e3dc; --hairline-strong:#8c8a84; --control:#8c8a84; --button-line:#d9d6ce;
+    --on-dark:#ffffff; --on-dark-mute:rgba(255,255,255,0.72);
     --error:#e52020; --error-deep:#650b0b; --warning:#df6500; --warning-bright:#ef9100;
-    --success-deep:#3f8500; --yellow-pale:#feeeb2;
-    --r-sm:2px;
+    --success-deep:#1d7a55; --yellow-pale:#feeeb2; --fault-bg:#d91c1c;
+    --notice-bg:#eeebe4; --err-bg:#fff5f5; --err-line:#f4c7c7; --warn-bg:#fff8ef; --warn-line:#f3d2ad; --warn-text:#7a3e00;
+    --row-hover:#faf9f6; --log-warn-bg:#fffaf2; --backdrop:rgba(0, 0, 0, 0.4);
+    --card-shadow:0 0 0 1px rgba(60, 50, 30, 0.06), 0 1px 3px rgba(60, 50, 30, 0.05); --dialog-shadow:0 12px 40px rgba(0, 0, 0, 0.18);
+    color-scheme:light;
+    --r-sm:6px; --r-md:10px; --r-lg:16px;
     --s-xs:4px; --s-sm:8px; --s-md:12px; --s-lg:16px; --s-xl:24px; --s-xxl:32px; --s-section:64px;
     --ease:cubic-bezier(0.2, 0.7, 0.2, 1);
     --z-banner:30; --z-skip:40;
-    --font:Arial, sans-serif;
+    --font:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  /* Dark theme (js/theme.js sets data-theme on <html> before first paint): charcoal equivalents, a lighter green
+     accent with dark text, status colours lifted so text keeps at least 4.5:1. */
+  :root[data-theme="dark"] {
+    color-scheme:dark;
+    --primary:#7fc41a; --primary-dark:#8fd12a; --on-primary:#141a05; --primary-edge:#7fc41a; --progress-edge:#7fc41a;
+    --accent-soft:#2a3418; --accent-text:#9ad43f;
+    --ink:#eceae5; --body:#e2e0db; --label:#cac8c3; --mute:#a5a39e; --stone:#8c8a86; --ash:#6b6a67;
+    --page:#1a1b1d; --canvas:#232427; --surface-soft:#2b2c30;
+    --hairline:#36373c; --hairline-strong:#7d7d82; --control:#7d7d82; --button-line:#45464b;
+    --error:#ff5f57; --error-deep:#ff9b95; --warning:#f5a524; --success-deep:#4cc495; --fault-bg:#b3261e;
+    --notice-bg:#202124; --err-bg:#2f1d1d; --err-line:#5c2626; --warn-bg:#2a2012; --warn-line:#5e4421; --warn-text:#f6c47e;
+    --row-hover:#26272a; --log-warn-bg:#2a2416; --backdrop:rgba(0, 0, 0, 0.65);
+    --card-shadow:0 0 0 1px #2e2f33; --dialog-shadow:0 0 0 1px #2b2b30, 0 16px 48px rgba(0, 0, 0, 0.6);
   }
   * { box-sizing:border-box; }
-  html { -webkit-text-size-adjust:100%; scroll-padding-top:96px; -webkit-tap-highlight-color:rgba(118, 185, 0, 0.25); }
-  body { margin:0; font:400 16px/1.5 var(--font); color:var(--body); background:var(--surface-soft);
-         min-height:100dvh; display:flex; flex-direction:column; }
+  html { -webkit-text-size-adjust:100%; scroll-padding-top:96px; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; font:400 16px/1.5 var(--font); color:var(--body); background:var(--page);
+         min-height:100dvh; display:flex; flex-direction:column; -webkit-font-smoothing:antialiased; }
   h2[tabindex]:focus { outline:none; }
-  h2[tabindex]:focus-visible { outline:3px solid var(--primary); outline-offset:2px; }
-  h1, h2, h3 { color:var(--ink); font-weight:700; line-height:1.25; margin:0; text-wrap:balance; }
+  h2[tabindex]:focus-visible { outline:2px solid var(--ink); outline-offset:4px; }
+  h1, h2, h3 { color:var(--ink); font-weight:600; line-height:1.25; margin:0; text-wrap:balance; }
   p { max-width:72ch; }
   code { font:700 0.9375em/1.4 var(--font); color:var(--ink); }
 
@@ -37,103 +61,133 @@
           color:var(--on-primary); font-weight:700; padding:var(--s-md) var(--s-lg); border-radius:var(--r-sm); }
   .skip:focus { top:var(--s-sm); }
 
-  /* SIMULATION banner: persistent on every screen (C4) */
-  .sticky-top { position:sticky; top:0; z-index:var(--z-banner); }
-  #sim-banner { display:flex; align-items:center; justify-content:center;
-                gap:var(--s-md); background:var(--yellow-pale); color:var(--ink); font-weight:700; font-size:15px;
-                line-height:1.35; text-align:center; padding:var(--s-sm) var(--s-lg); border-bottom:1px solid var(--ink); }
-  #sim-banner::before { content:""; flex:none; width:12px; height:12px; background:var(--ink); }
+  /* Header and workflow: one light surface */
+  .topbar { background:var(--canvas); color:var(--ink); }
+  .topbar-inner { max-width:1120px; margin:0 auto; min-height:56px; padding:var(--s-sm) var(--s-xl) 0;
+                  display:flex; align-items:center; gap:var(--s-md) var(--s-lg); flex-wrap:wrap; }
+  .brand { display:flex; align-items:center; margin-right:auto; min-width:0; }
+  .brand h1 { font-size:16px; line-height:1.35; letter-spacing:-0.01em; }
+  .brand h1 span { color:var(--mute); font-weight:400; }
+  .badge { display:inline-block; max-width:100%; font-size:12px; font-weight:600; line-height:1.3;
+           letter-spacing:0.01em; padding:5px 10px; border-radius:999px; border:1px solid transparent; }
+  /* The demo profile badge is shown in the Limitations dialog; the header keeps only a non-demo (warning) badge */
+  .badge-demo { display:none; }
+  .badge-prod { color:var(--warn-text); background:var(--warn-bg); border-color:var(--warn-line); }
+  button.quiet { min-height:36px; padding:0 var(--s-md); font-size:14px; border-color:transparent; background:transparent; }
+  button.quiet:hover { background:var(--surface-soft); }
+  /* Theme switch: a labelled toggle button (aria-pressed = dark on) */
+  button.theme-toggle { display:inline-flex; align-items:center; gap:var(--s-sm); }
+  button.theme-toggle::before { content:""; flex:none; width:28px; height:16px; border-radius:999px; border:1px solid var(--control);
+                                background:radial-gradient(circle at 7px 50%, var(--mute) 5px, transparent 5.5px); }
+  button.theme-toggle[aria-pressed="true"]::before { border-color:var(--primary-edge); background:radial-gradient(circle at 19px 50%, var(--primary) 5px, transparent 5.5px) var(--surface-soft); }
 
-  /* Primary nav: black frame */
-  .topbar { background:var(--surface-dark); color:var(--on-dark); }
-  .topbar-inner { max-width:1120px; margin:0 auto; min-height:64px; padding:var(--s-md) var(--s-xl);
-                  display:flex; align-items:center; gap:var(--s-lg); flex-wrap:wrap; }
-  .brand { display:flex; align-items:center; gap:var(--s-md); margin-right:auto; min-width:0; }
-  .brand-mark { flex:none; width:16px; height:16px; background:var(--primary); }
-  .brand h1 { color:var(--on-dark); font-size:17px; line-height:1.3; }
-  .brand h1 span { color:var(--on-dark-mute); font-weight:400; }
-  .badge { display:inline-block; max-width:100%; font-size:11px; font-weight:700; line-height:1.3; text-transform:uppercase;
-           letter-spacing:0.02em; padding:6px 10px; border-radius:var(--r-sm); border:1px solid; }
-  .badge-demo { color:var(--on-dark); border-color:var(--hairline-strong); background:var(--surface-elevated); }
-  .badge-prod { color:var(--warning-bright); border-color:var(--warning-bright); background:var(--surface-elevated); }
-
-  /* Workflow strip */
   .steps { background:var(--canvas); border-bottom:1px solid var(--hairline); }
-  .steps ol { list-style:none; margin:0 auto; max-width:1120px; padding:var(--s-sm) var(--s-xl);
-              display:flex; gap:var(--s-xs); overflow-x:auto; scrollbar-width:thin; }
-  .steps li { flex:none; display:flex; align-items:center; gap:var(--s-sm); min-height:40px; padding:0 18px;
-              font-size:14.4px; font-weight:700; letter-spacing:0.01em; color:var(--mute); border-radius:var(--r-sm);
+  .steps ol { list-style:none; margin:0 auto; max-width:1120px; padding:var(--s-xs) var(--s-xl) 10px;
+              display:flex; gap:2px; overflow-x:auto; scrollbar-width:thin; }
+  .steps li { flex:none; display:flex; align-items:center; gap:6px; min-height:32px; padding:0 var(--s-md);
+              font-size:14px; font-weight:500; color:var(--mute); border-radius:999px;
               transition:background-color 200ms var(--ease), color 200ms var(--ease); }
   .steps li .n { font-variant-numeric:tabular-nums; }
-  .steps li.done { color:var(--ink); }
-  .steps li.done .n::after { content:" ✓"; color:var(--success-deep); }
-  .steps li[aria-current="step"] { background:var(--ink); color:var(--on-dark); }
+  .steps li.done { color:var(--label); }
+  .steps li.done .n::after { content:" ✓"; }
+  .steps li[aria-current="step"] { background:var(--accent-soft); color:var(--ink); font-weight:600; box-shadow:inset 0 -2px 0 var(--primary-edge); }
+  .steps li[aria-current="step"] .n { color:var(--accent-text); }
 
-  /* Buttons */
-  button { font:700 16px/1.25 var(--font); min-height:44px; padding:0 var(--s-xl); border-radius:var(--r-sm);
-           border:2px solid var(--primary); background:transparent; color:var(--ink); cursor:pointer;
+  /* Buttons: dark neutral primary, quiet secondary */
+  button { font:600 15px/1.25 var(--font); min-height:44px; padding:0 20px; border-radius:var(--r-md);
+           border:1px solid var(--button-line); background:var(--canvas); color:var(--ink); cursor:pointer;
            transition:background-color 200ms var(--ease), border-color 200ms var(--ease), transform 120ms var(--ease);
            touch-action:manipulation; }
   button:hover { background:var(--surface-soft); }
   button:active { transform:translateY(1px); }
-  button.primary { background:var(--primary); border-color:var(--primary); color:var(--on-primary); }
-  button.primary:hover { background:var(--primary-dark); border-color:var(--primary-dark); }
+  button.primary { background:var(--primary); border-color:var(--primary-edge); color:var(--on-primary); }
+  button.primary:hover { background:var(--primary-dark); border-color:var(--primary-edge); }
   button:disabled, button:disabled:hover { background:var(--surface-soft); border-color:var(--hairline); color:var(--ash);
                                            cursor:not-allowed; transform:none; }
-  button.on-dark { border:1px solid var(--on-dark); color:var(--on-dark); padding:0 var(--s-lg); }
-  button.on-dark:hover { background:var(--surface-elevated); }
-  :focus-visible { outline:3px solid var(--primary); outline-offset:2px; }
-  .topbar :focus-visible { outline-color:var(--on-dark); }
+  :focus-visible { outline:2px solid var(--ink); outline-offset:2px; }
 
   /* Layout */
-  main { flex:1 0 auto; width:100%; max-width:1120px; margin:0 auto; padding:var(--s-xxl) var(--s-xl) var(--s-section); }
-  section.screen { position:relative; background:var(--canvas); border:1px solid var(--hairline); border-radius:var(--r-sm);
-                   padding:var(--s-xxl); }
-  section.screen::before { content:""; position:absolute; top:-1px; left:-1px; width:12px; height:12px; background:var(--primary); }
-  .eyebrow { margin:0 0 var(--s-xs); font-size:14px; font-weight:700; line-height:1.43; text-transform:uppercase;
-             letter-spacing:0.02em; color:var(--mute); }
-  h2 { font-size:24px; }
+  main { flex:1 0 auto; width:100%; max-width:1120px; margin:0 auto; padding:var(--s-xl) var(--s-xl) var(--s-section); }
+  section.screen { position:relative; background:var(--canvas); border-radius:var(--r-lg); padding:var(--s-xxl);
+                   box-shadow:var(--card-shadow); }
+  .eyebrow { margin:0 0 var(--s-xs); font-size:13px; font-weight:500; line-height:1.4; color:var(--mute); }
+  h2 { font-size:26px; letter-spacing:-0.015em; }
   h3 { font-size:18px; line-height:1.4; margin:0 0 var(--s-xs); }
   .muted { color:var(--mute); font-size:14px; }
   .meta { display:flex; flex-wrap:wrap; gap:var(--s-xs) var(--s-lg); margin-top:var(--s-sm); font-size:14px; color:var(--mute); }
   .meta strong { color:var(--ink); font-variant-numeric:tabular-nums; }
   .fixed { font-style:italic; color:var(--mute); }
 
-  /* Forms */
-  .grid { display:grid; grid-template-columns:200px minmax(0, 1fr); gap:var(--s-lg) var(--s-xl); align-items:start;
-          margin:var(--s-xl) 0 0; padding-top:var(--s-xl); border-top:1px solid var(--hairline); }
-  .grid label { font-weight:700; color:var(--ink); padding-top:11px; }
+  /* Forms (control borders stay at 3:1 or more against white) */
   .field-note { margin-top:var(--s-sm); }
   input[type=text], select { font:400 16px/1.25 var(--font); color:var(--ink); background:var(--canvas);
-                             min-height:44px; padding:0 var(--s-lg); border:1px solid var(--mute); border-radius:var(--r-sm);
+                             min-height:44px; padding:0 14px; border:1px solid var(--control); border-radius:var(--r-md);
                              width:100%; max-width:480px; transition:border-color 200ms var(--ease); }
   input[type=text]::placeholder { color:var(--stone); }
-  input[type=text]:hover, select:hover { border-color:var(--ink); }
-  input[type=text]:focus-visible, select:focus-visible { border-color:var(--ink); outline:2px solid var(--primary); outline-offset:0; }
-  select:disabled { background:var(--surface-soft); color:var(--stone); border-color:var(--hairline); cursor:not-allowed; }
-  .inline { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-sm) var(--s-md); }
+  input[type=text]:hover, select:hover { border-color:var(--mute); }
+  input[type=text]:focus-visible, select:focus-visible { border-color:var(--ink); outline:2px solid var(--ink); outline-offset:1px; }
+  select:disabled { background:var(--surface-soft); color:var(--mute); border-color:var(--hairline); cursor:not-allowed; }
+
+  /* Setup (Screen 1): one column; common scenarios first, full selector and Advanced kept secondary */
+  #screen-setup { max-width:520px; margin:var(--s-xl) auto 0; padding:40px 40px 36px; }
+  .setup-head { margin-bottom:28px; }
+  .setup-body { display:grid; gap:20px; }
+  .group-title { display:block; font-size:15px; font-weight:600; line-height:1.4; color:var(--ink); margin:0 0 var(--s-md); }
+  .fields { display:grid; gap:var(--s-md) var(--s-lg); }
+  .fields-2 { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+  .fields-4 { grid-template-columns:repeat(4, minmax(0, 1fr)); }
+  .field { display:flex; flex-direction:column; gap:6px; min-width:0; }
+  .field > label, .sub-label { font-size:14px; font-weight:500; color:var(--label); }
+  .field input[type=text], .field select, .setup-body select { max-width:none; }
+  .field .field-note, .setup-body .field-note { margin-top:2px; font-size:13px; }
+  .quick { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:var(--s-sm); margin-bottom:var(--s-lg); }
+  button.choice { display:flex; flex-direction:column; align-items:flex-start; gap:2px; min-height:64px; padding:10px 14px;
+                  text-align:left; font-weight:600; border-color:var(--button-line); }
+  button.choice .choice-s { font-size:12px; font-weight:400; line-height:1.35; color:var(--mute); }
+  button.choice[aria-pressed="true"] { border-color:var(--ink); box-shadow:inset 0 0 0 1px var(--ink); background:var(--canvas); }
+  .scenario-all { display:flex; flex-direction:column; gap:6px; }
+  details.advanced { border-top:1px solid var(--hairline); padding-top:var(--s-md); }
+  details.advanced > summary { display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--s-xs) var(--s-md); cursor:pointer;
+                               list-style:none; padding:6px 0; font-size:15px; font-weight:600; color:var(--ink); }
+  details.advanced > summary::-webkit-details-marker { display:none; }
+  details.advanced > summary::before { content:"\203A"; display:inline-block; width:12px; color:var(--mute); transition:transform 150ms var(--ease); }
+  details.advanced[open] > summary::before { transform:rotate(90deg); }
+  details.advanced > summary .muted { font-size:13px; font-weight:400; }
+  .adv-body { padding:var(--s-md) 0 var(--s-xs); }
+  details.inline-details { margin-top:var(--s-sm); }
+  details.inline-details > summary { display:inline-flex; align-items:center; gap:6px; cursor:pointer; list-style:none;
+                                     font-size:13px; font-weight:500; color:var(--mute); padding:2px 0; }
+  details.inline-details > summary::-webkit-details-marker { display:none; }
+  details.inline-details > summary::before { content:"\203A"; display:inline-block; transition:transform 150ms var(--ease); }
+  details.inline-details[open] > summary::before { transform:rotate(90deg); }
+  details.inline-details > summary:hover { color:var(--ink); }
+  details.inline-details > :not(summary) { margin:var(--s-xs) 0 0; }
+  .setup-actions { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-sm) var(--s-lg); margin-top:32px; }
+  .setup-actions .primary { width:100%; min-height:48px; }
+  .setup-actions p { margin:0; }
+  #screen-setup .panel { margin-top:var(--s-xxl); padding-top:0; border-top:none; }
 
   .panel { margin-top:var(--s-xxl); padding-top:var(--s-xl); border-top:1px solid var(--hairline); }
   .panel p { margin:0 0 var(--s-lg); }
 
   /* Tables */
-  .table-wrap { width:100%; overflow-x:auto; margin:var(--s-md) 0; border:1px solid var(--hairline); border-radius:var(--r-sm); }
+  .table-wrap { width:100%; overflow-x:auto; margin:var(--s-md) 0; border:1px solid var(--hairline); border-radius:12px; }
   table { border-collapse:collapse; width:100%; }
   th, td { text-align:left; padding:10px var(--s-md); border-bottom:1px solid var(--hairline); vertical-align:middle; }
   tbody tr:last-child td { border-bottom:none; }
-  th { font-size:12px; font-weight:700; line-height:1.25; text-transform:uppercase; letter-spacing:0.02em; color:var(--mute);
-       background:var(--surface-soft); white-space:nowrap; }
+  th { font-size:12px; font-weight:600; line-height:1.25; color:var(--mute); background:var(--surface-soft); white-space:nowrap; }
   td { font-variant-numeric:tabular-nums; overflow-wrap:break-word; }
   td code { white-space:nowrap; }
   td input[type=text], td select { min-height:40px; min-width:104px; max-width:160px; }
-  tbody tr:hover td { background:#fbfbfb; }
+  tbody tr:hover td { background:var(--row-hover); }
 
   /* Status */
-  .alert { margin:var(--s-xl) 0 var(--s-lg); padding:var(--s-lg) var(--s-xl); background:var(--surface-soft);
-           border-left:4px solid var(--error); color:var(--error-deep); font-weight:700; border-radius:var(--r-sm); }
-  .alert-warn { border-left-color:var(--warning); color:var(--ink); }
+  /* Operational alerts keep their colour: red for invalid input, amber for a block or caution */
+  .alert { margin:var(--s-xl) 0 var(--s-lg); padding:14px var(--s-lg) 14px 18px; background:var(--err-bg); border:1px solid var(--err-line);
+           border-left:4px solid var(--error); color:var(--error-deep); font-weight:600; line-height:1.5; border-radius:12px; }
+  .alert-warn { background:var(--warn-bg); border-color:var(--warn-line); border-left-color:var(--warning); color:var(--ink); }
   .verdict { display:inline-block; font-size:18px; font-weight:700; line-height:1.25; padding:var(--s-sm) 14px;
-             border:2px solid; border-radius:var(--r-sm); }
+             border:2px solid; border-radius:var(--r-md); }
   .verdict-ne { color:var(--body); background:var(--surface-soft); border-color:var(--hairline-strong); }
   .verdict-row { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-md); margin:0 0 var(--s-md); }
   .chip { display:inline-block; font-size:11px; font-weight:700; line-height:1.3; letter-spacing:0.02em; padding:3px var(--s-sm);
@@ -143,23 +197,17 @@
 
   /* Limitations dialog */
   dialog#limitations { width:min(720px, calc(100vw - 32px)); max-height:calc(100dvh - 32px); padding:var(--s-xxl);
-                       border:1px solid var(--hairline); border-radius:var(--r-sm); color:var(--body); overflow:auto; overscroll-behavior:contain; }
-  dialog#limitations::backdrop { background:rgba(0, 0, 0, 0.6); }
+                       border:none; border-radius:var(--r-lg); box-shadow:var(--dialog-shadow);
+                       background:var(--canvas); color:var(--body); overflow:auto; overscroll-behavior:contain; }
+  dialog#limitations::backdrop { background:var(--backdrop); }
   dialog#limitations h3 { margin-top:var(--s-xl); }
   #chip-legend { list-style:none; padding:0; margin:var(--s-md) 0 var(--s-xl); display:grid; gap:var(--s-sm); }
   #chip-legend li { font-size:15px; }
 
-  /* Footer: black frame */
-  footer { background:var(--surface-dark); color:var(--on-dark-mute); font-size:13px; line-height:1.5; }
-  .footer-inner { max-width:1120px; margin:0 auto; padding:var(--s-xl); display:flex; flex-wrap:wrap; gap:var(--s-xs) var(--s-xl); }
-  footer strong { color:var(--on-dark); }
-
-  /* FAULT_LOCKED banner (02 §7.2): error fill, white text, below the SIMULATION banner */
-  #fault-banner { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:var(--s-md) var(--s-lg);
-                  background:var(--error); color:var(--on-dark); font-weight:700; font-size:16px; padding:var(--s-sm) var(--s-lg); }
-  #fault-banner button { min-height:36px; border:1px solid var(--on-dark); color:var(--on-dark); padding:0 var(--s-lg); }
-  #fault-banner button:hover { background:var(--error-deep); }
-  #fault-banner :focus-visible { outline-color:var(--on-dark); }
+  /* Footer: quiet line under the page */
+  footer { color:var(--mute); font-size:13px; line-height:1.5; border-top:1px solid var(--hairline); }
+  .footer-inner { max-width:1120px; margin:0 auto; padding:var(--s-lg) var(--s-xl); display:flex; flex-wrap:wrap; gap:var(--s-xs) var(--s-xl); }
+  footer strong { color:var(--label); font-weight:600; }
 
   .lead { margin:var(--s-lg) 0 0; }
   .small { font-size:13px; }
@@ -173,8 +221,8 @@
   .st-pass { border-color:var(--success-deep); color:var(--success-deep); background:var(--canvas); }
   .st-fail { border-color:var(--error); color:var(--error-deep); background:var(--canvas); }
   .st-warn { border-color:var(--warning); color:var(--ink); background:var(--canvas); box-shadow:inset 3px 0 0 var(--warning); }
-  .st-run { border-color:var(--ink); color:var(--on-dark); background:var(--ink); }
-  .st-lock { border-color:var(--error); color:var(--on-dark); background:var(--error); }
+  .st-run { border-color:var(--ink); color:var(--canvas); background:var(--ink); }
+  .st-lock { border-color:var(--fault-bg); color:#ffffff; background:var(--fault-bg); }
   .verdict-pass { color:var(--success-deep); background:var(--canvas); border-color:var(--success-deep); }
   .verdict-fail { color:var(--error-deep); background:var(--canvas); border-color:var(--error); }
   .verdict-abort { color:var(--ink); background:var(--canvas); border-color:var(--warning); }
@@ -183,84 +231,198 @@
   .verdict-block p { margin:0 0 var(--s-xs); }
 
   /* Pre-check lamps */
-  .lamps { list-style:none; margin:var(--s-xl) 0 0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:var(--s-md); }
+  .lamps { list-style:none; margin:var(--s-xl) 0 0; padding:0; display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:var(--s-sm); }
   .lamp { display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:2px var(--s-md); align-items:center;
-          padding:var(--s-md) var(--s-lg); border:1px solid var(--hairline); border-radius:var(--r-sm); background:var(--canvas); }
-  .lamp-dot { grid-row:span 2; width:16px; height:16px; border:1px solid var(--ink); }
+          padding:var(--s-md) var(--s-lg); border:1px solid var(--hairline); border-radius:12px; background:var(--canvas); }
+  .lamp-dot { grid-row:span 2; width:12px; height:12px; border-radius:50%; }
   .lamp.ok .lamp-dot { background:var(--success-deep); }
-  .lamp.open { border-color:var(--error); }
+  .lamp.open { border-color:var(--error); background:var(--err-bg); }
   .lamp.open .lamp-dot { background:var(--error); }
-  .lamp-name { font-weight:700; color:var(--ink); }
-  .lamp-state { font-weight:700; font-size:14px; text-align:right; }
+  .lamp-name { font-size:15px; font-weight:600; color:var(--ink); }
+  .lamp-state { font-weight:600; font-size:13px; text-align:right; }
   .lamp.ok .lamp-state { color:var(--success-deep); }
   .lamp.open .lamp-state { color:var(--error-deep); }
   .lamp-src { font-size:13px; color:var(--mute); }
   .lamp button { grid-column:3; min-height:36px; padding:0 var(--s-md); font-size:14px; }
+  /* Readiness: two summary rows above the start action */
+  .readiness { list-style:none; margin:var(--s-xl) 0 0; padding:0; display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:var(--s-md); }
+  .rd { display:grid; grid-template-columns:auto minmax(0, 1fr) auto; gap:2px var(--s-md); align-items:center;
+        padding:var(--s-lg) 20px; border:1px solid var(--hairline); border-radius:12px; background:var(--canvas); }
+  .rd-dot { grid-row:span 2; width:12px; height:12px; border-radius:50%; background:var(--ash); }
+  .rd-name { font-size:17px; font-weight:600; color:var(--ink); }
+  .rd-state { font-size:14px; font-weight:600; text-align:right; }
+  .rd-src { grid-column:2 / -1; font-size:13px; color:var(--mute); }
+  .rd.ok .rd-dot { background:var(--success-deep); }
+  .rd.ok .rd-state { color:var(--success-deep); }
+  .rd.no { border-color:var(--error); background:var(--err-bg); }
+  .rd.no .rd-dot { background:var(--error); }
+  .rd.no .rd-state { color:var(--error-deep); }
+  #precheck-interlocks { margin-top:var(--s-xs); border-top:1px solid var(--hairline); }
+  #precheck-interlocks .lamps { margin-bottom:var(--s-lg); }
+  .ready-bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:var(--s-md) var(--s-xl);
+               margin:var(--s-xl) 0 var(--s-xxl); }
+  .ready-bar .alert { flex:1 1 360px; margin:0; }
+  .ready { flex:1 1 360px; margin:0; font-size:17px; font-weight:600; color:var(--success-deep); }
+  .ready-actions { margin-top:0; }
+  .lamps-title .muted { font-size:13px; font-weight:400; }
+  .lamps-title + .lamps { margin-top:0; }
 
-  /* Run dashboard */
-  .run-head { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:var(--s-lg) var(--s-xl);
-              margin-top:var(--s-xl); padding-top:var(--s-xl); border-top:1px solid var(--hairline); }
+  /* Run (Screen 3): active test, bench state and controls side by side; compact stages; log on demand */
+  .run-top { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:var(--s-md) var(--s-xl); }
+  .run-title { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-sm) var(--s-lg); }
   .state-line { display:flex; align-items:center; gap:var(--s-sm); }
-  .state-line .st { font-size:13px; padding:6px 10px; }
-  .k { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.02em; color:var(--mute); }
-  .clocks { display:flex; flex-wrap:wrap; gap:var(--s-lg) var(--s-xxl); }
-  .clock { display:flex; flex-direction:column; gap:2px; }
-  .clock .v { font-size:24px; font-weight:700; line-height:1.25; color:var(--ink); font-variant-numeric:tabular-nums; }
-  .run-grid { display:grid; grid-template-columns:minmax(0, 5fr) minmax(0, 7fr); gap:var(--s-lg); margin-top:var(--s-lg); }
-  .run-grid-even { grid-template-columns:repeat(2, minmax(0, 1fr)); }
-  .block { min-width:0; border:1px solid var(--hairline); border-radius:var(--r-sm); padding:var(--s-lg) var(--s-xl); background:var(--canvas); }
+  .state-line .st { font-size:12px; padding:5px 10px; border-radius:999px; }
+  .k { font-size:12px; font-weight:500; color:var(--mute); }
+  .clocks { display:flex; flex-wrap:wrap; gap:var(--s-md) var(--s-xxl); }
+  .clock { display:flex; flex-direction:column; gap:0; }
+  .clock .v { font-size:22px; font-weight:600; line-height:1.25; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .run-layout { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 300px); gap:var(--s-lg) 20px; margin-top:var(--s-xl); align-items:start; }
+  .run-title .st { font-size:12px; padding:5px 10px; border-radius:999px; }
+  .run-top .run-actions { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:var(--s-sm) var(--s-md); }
+  .run-top .run-actions button { flex:0 0 auto; }
+  button.stop { min-width:140px; font-weight:700; }
+  .enc-pill { margin:0; display:inline-flex; align-items:center; gap:var(--s-sm); padding:8px 14px; border-radius:999px;
+              border:1px solid var(--hairline); background:var(--surface-soft); font-size:14px; font-weight:600; color:var(--ink); }
+  .enc-pill::before { content:""; width:10px; height:10px; border-radius:50%; background:var(--ash); flex:none; }
+  .enc-pill.locked::before { background:var(--warning); }
+  .enc-pill.unlocked::before { background:var(--success-deep); }
+  .enc-pill.lockout { border-color:var(--error); background:var(--err-bg); color:var(--error-deep); }
+  .enc-pill.lockout::before { background:var(--error); }
+  .fault-sim { margin-top:var(--s-lg); }
+  .fault-sim .controls { margin-top:var(--s-sm); }
+  .tech-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:var(--s-lg) var(--s-xxl); margin-bottom:var(--s-md); }
+  details.inline-details.rule-details { margin-top:2px; }
+  .stages-col { min-width:0; }
+  .stages-col h3 { font-size:13px; line-height:1.4; font-weight:600; color:var(--mute); margin:0 0 var(--s-sm); }
+  .active-progress { margin:var(--s-sm) 0 0; }
+  .active-progress .progress { margin-top:4px; height:6px; border-radius:3px; }
+  .side-col { display:grid; gap:var(--s-lg); min-width:0; }
+  .run-grid-even { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:var(--s-lg); margin-top:var(--s-lg); }
+  .block { min-width:0; border:1px solid var(--hairline); border-radius:12px; padding:var(--s-lg) 20px; background:var(--canvas); }
   .block-wide { margin-top:var(--s-lg); }
-  .block h3 { font-size:12px; line-height:1.4; font-weight:700; text-transform:uppercase; letter-spacing:0.02em; color:var(--mute); margin:0 0 var(--s-md); }
-  .block h3.sub { margin-top:var(--s-xl); }
+  .block h3 { font-size:13px; line-height:1.4; font-weight:600; color:var(--mute); margin:0 0 var(--s-md); }
+  .block h3.sub { margin-top:var(--s-lg); }
+  .run-actions { margin-top:0; }
+  .run-actions button { flex:1 1 auto; }
 
-  .stage-list { list-style:none; margin:0; padding:0; }
-  .stage-list li { display:grid; grid-template-columns:48px minmax(0, 1fr) auto; gap:2px var(--s-sm); align-items:center;
-                   padding:var(--s-sm) var(--s-sm); border-bottom:1px solid var(--hairline); }
-  .stage-list li:last-child { border-bottom:none; }
-  .stage-list .id { font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
-  .stage-list .nm { font-size:14px; line-height:1.35; color:var(--body); }
-  .stage-list .cls { grid-column:2; font-size:11px; font-weight:700; letter-spacing:0.02em; color:var(--mute); }
-  .stage-list .stat { grid-row:span 2; display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
-  .stage-list li.active { background:var(--surface-soft); box-shadow:inset 3px 0 0 var(--primary); }
+  .stage-list { list-style:none; margin:0 -8px; padding:0; }
+  .stage-list li { display:grid; grid-template-columns:36px minmax(0, 1fr) auto; gap:0 var(--s-sm); align-items:center;
+                   padding:5px 8px; border-radius:8px; }
+  .stage-list .id { font-size:13px; font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .stage-list .nm { font-size:13px; line-height:1.35; color:var(--body); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stage-list .cls { display:none; grid-column:2 / -1; font-size:11px; font-weight:500; color:var(--mute); }
+  .stage-list .stat { display:flex; align-items:center; gap:4px; }
+  .stage-list .stat .st { font-size:10px; padding:2px 6px; }
+  .stage-list .stat .st:first-child:not(:last-child) { display:none; }
+  .stage-list li.active { background:var(--surface-soft); box-shadow:inset 3px 0 0 var(--primary-edge); }
+  .stage-list li.active .nm { white-space:normal; font-weight:600; }
+  .stage-list li.active .cls { display:block; }
   .stage-list li.skipped .nm, .stage-list li.skipped .id { color:var(--mute); }
-  .progress { height:4px; background:var(--hairline); margin-top:var(--s-sm); }
-  .progress > span { display:block; height:100%; background:var(--ink); }
+  .progress { height:4px; background:var(--hairline); margin-top:6px; border-radius:2px; overflow:hidden; }
+  .progress > span { display:block; height:100%; background:var(--primary); box-shadow:inset 0 0 0 1px var(--progress-edge); }
 
-  .active-name { font-size:17px; font-weight:700; line-height:1.4; color:var(--ink); margin:0; }
-  .active-meta { margin:var(--s-xs) 0 0; font-size:14px; color:var(--mute); }
+  .active-zone { padding-bottom:var(--s-md); }
+  .readings-zone { margin:var(--s-sm) -8px 0; padding:var(--s-md) var(--s-md) var(--s-xs); background:var(--surface-soft); border-radius:var(--r-md); }
+  .readings-zone h3.sub { margin:0 0 var(--s-md); color:var(--label); }
+  .readings-zone h3.sub .muted { font-size:13px; font-weight:400; }
+  .readings-zone .rcard { border-top-color:var(--button-line); }
+  .active-name { font-size:24px; font-weight:600; line-height:1.3; letter-spacing:-0.01em; color:var(--ink); margin:0; }
+  .current-col { padding:20px 24px; }
+  .current-col .active-progress .progress { height:8px; border-radius:4px; }
+  .bench-col .kv { gap:4px var(--s-md); }
+  .bench-col .kv dt, .bench-col .kv dd { font-size:13px; }
+  .active-meta { margin:var(--s-xs) 0 0; font-size:13px; color:var(--mute); }
   .rcard { padding:var(--s-md) 0; border-top:1px solid var(--hairline); }
   .rcard:first-child { border-top:none; padding-top:0; }
   .rcard-top { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:var(--s-xs) var(--s-md); }
-  .rcard-label { font-weight:700; color:var(--ink); }
-  .rcard-value { font-size:28px; font-weight:700; line-height:1.2; color:var(--ink); font-variant-numeric:tabular-nums; margin:var(--s-xs) 0; }
-  .rcard-value .u { font-size:16px; font-weight:400; color:var(--mute); margin-left:4px; }
-  .rcard-rule { font-size:14px; color:var(--body); margin:0 0 var(--s-xs); }
+  .rcard-label { font-weight:600; color:var(--ink); font-size:14px; }
+  .rcard-value { font-size:24px; font-weight:600; line-height:1.2; color:var(--ink); font-variant-numeric:tabular-nums; margin:var(--s-xs) 0; }
+  .rcard-value .u { font-size:15px; font-weight:400; color:var(--mute); margin-left:4px; }
+  .rcard-rule { font-size:13px; color:var(--body); margin:0 0 var(--s-xs); }
+  .rcard .muted.small { margin:var(--s-xs) 0 0; }
   .chips { display:flex; flex-wrap:wrap; gap:4px; margin:var(--s-xs) 0; }
-  .equation { margin-top:var(--s-lg); padding:var(--s-md) var(--s-lg); background:var(--surface-soft); border-left:3px solid var(--ink);
-              font-size:15px; font-weight:700; line-height:1.5; color:var(--ink); overflow-wrap:anywhere; }
+  .equation { margin-top:var(--s-md); padding:var(--s-md) var(--s-lg); background:var(--surface-soft); border-radius:var(--r-md);
+              font-size:14px; font-weight:600; line-height:1.5; color:var(--ink); overflow-wrap:anywhere; }
   .equation .k { display:block; margin-bottom:2px; }
   .empty { color:var(--mute); font-size:14px; margin:0; }
 
-  .kv { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:var(--s-sm) var(--s-lg); margin:0; }
-  .kv dt { font-size:14px; color:var(--mute); }
-  .kv dd { margin:0; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; }
-  .meter { height:10px; margin-top:var(--s-lg); border:1px solid var(--hairline-strong); background:var(--surface-soft); }
+  .kv { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:6px var(--s-lg); margin:0; }
+  .kv dt { font-size:13px; color:var(--mute); }
+  .kv dd { margin:0; font-size:14px; font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .meter { height:8px; margin-top:var(--s-md); border-radius:4px; overflow:hidden; background:var(--hairline); }
   .meter span { display:block; height:100%; width:0; background:var(--warning); }
   .meter span.low { background:var(--success-deep); }
+  #bus-scale { margin:6px 0 0; }
   .controls { display:flex; flex-wrap:wrap; gap:var(--s-sm); }
+  .controls button { flex:1 1 auto; min-height:40px; padding:0 14px; }
   button.danger { border-color:var(--error); color:var(--error-deep); }
-  button.danger:hover { background:var(--canvas); border-color:var(--error-deep); }
+  button.danger:hover { background:var(--err-bg); border-color:var(--error-deep); }
 
+  details.log-details { margin-top:var(--s-lg); border:1px solid var(--hairline); border-radius:12px; background:var(--canvas); }
+  details.log-details > summary { display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--s-xs) var(--s-md); cursor:pointer;
+                                  list-style:none; padding:var(--s-md) 20px; font-size:14px; font-weight:600; color:var(--ink); }
+  details.log-details > summary::-webkit-details-marker { display:none; }
+  details.log-details > summary::before { content:"\203A"; display:inline-block; width:12px; color:var(--mute); transition:transform 150ms var(--ease); }
+  details.log-details[open] > summary::before { transform:rotate(90deg); }
+  details.log-details > summary .muted { font-size:13px; font-weight:400; }
+  details.log-details .log-wrap { margin:0 var(--s-md) var(--s-md); }
   .log-wrap { max-height:340px; overflow:auto; border:1px solid var(--hairline); border-radius:var(--r-sm); overscroll-behavior:contain; }
   .log th { position:sticky; top:0; z-index:1; }
   .log td { font-size:13px; padding:6px 10px; vertical-align:top; }
   .log td.num { text-align:right; white-space:nowrap; }
-  .log td.type { font-weight:700; color:var(--ink); white-space:nowrap; }
-  .log tr.ev-warn td { background:#fffaf2; }
+  .log td.type { font-weight:600; color:var(--ink); white-space:nowrap; }
+  .log tr.ev-warn td { background:var(--log-warn-bg); }
   .log tr.ev-warn td.type { box-shadow:inset 3px 0 0 var(--warning); }
   .log tr.ev-abort td.type, .log tr.ev-lock td.type { box-shadow:inset 3px 0 0 var(--error); color:var(--error-deep); }
 
-  /* Result */
+  /* Result (Screen 4): outcome, qualification, reason and enclosure first; evidence below */
+  .outcome { display:grid; grid-template-columns:minmax(0, 2fr) minmax(220px, 1fr); gap:var(--s-xl) 40px; margin-top:var(--s-xl);
+             padding:var(--s-xl) 28px; background:var(--surface-soft); border-radius:var(--r-lg); }
+  .outcome p { margin:0; }
+  .outcome .k { margin-bottom:var(--s-sm); }
+  /* Outcome kinds: one accent each, text always says the kind */
+  .outcome { border-left:4px solid var(--ash); }
+  .outcome.oc-pass { border-left-color:var(--success-deep); }
+  .outcome.oc-fail { border-left-color:var(--error); }
+  .outcome.oc-interrupted, .outcome.oc-incomplete { border-left-color:var(--warning); }
+  .outcome.oc-benchfault { border-left-color:var(--fault-bg); }
+  .oc-kind { font-size:28px; font-weight:600; line-height:1.2; letter-spacing:-0.015em; color:var(--ink); }
+  .oc-pass .oc-kind { color:var(--success-deep); }
+  .oc-fail .oc-kind, .oc-benchfault .oc-kind { color:var(--error-deep); }
+  .oc-detail { margin-top:var(--s-sm) !important; font-size:15px; line-height:1.5; color:var(--body); }
+  .oc-detail ul { margin:var(--s-xs) 0 0; padding-left:var(--s-lg); }
+  .oc-detail ul.findings { list-style:none; padding:0; margin:var(--s-sm) 0 var(--s-md); display:grid; gap:6px; }
+  .findings li { padding:6px 10px 6px 12px; border-left:3px solid var(--ash); background:var(--canvas); border-radius:4px; font-size:14px; line-height:1.45; }
+  .findings .f-safety, .findings .f-fail { border-left-color:var(--error); }
+  .findings .f-stop, .findings .f-block { border-left-color:var(--warning); }
+  .f-tag { display:inline-block; min-width:74px; margin-right:6px; font-size:11px; font-weight:700; letter-spacing:0.03em; text-transform:uppercase; color:var(--mute); }
+  .oc-counts { margin:2px 0 0 !important; font-size:13px; color:var(--mute); }
+  .oc-verdict { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-sm) var(--s-md); margin:var(--s-lg) 0 var(--s-xs); }
+  #result-verdict { font-size:13px; font-weight:700; padding:3px 10px; border-width:1px; border-radius:999px; }
+  .outcome .verdict-label { margin:0; font-size:13px; font-weight:500; line-height:1.45; color:var(--mute); }
+  #btn-reset-sim { margin-top:var(--s-md); }
+  .ai-bar { display:flex; flex-wrap:wrap; align-items:center; gap:var(--s-sm) var(--s-lg); margin-top:var(--s-lg); }
+  .ai-bar p { margin:0; }
+  .ai-bar .err { color:var(--error-deep); }
+  .lockout-note { margin-top:var(--s-sm) !important; font-size:14px; font-weight:600; color:var(--error-deep); }
+  .outcome-reason { font-size:14px; color:var(--label); line-height:1.5; }
+  .outcome .meta { margin-top:var(--s-sm); }
+  .outcome-side { border-left:1px solid var(--hairline); padding-left:28px; }
+  .enc-state { font-size:20px; font-weight:600; line-height:1.3; color:var(--ink); }
+  .enc-safe { color:var(--success-deep); }
+  .enc-locked { color:var(--error-deep); }
+  .enc-detail { margin-top:var(--s-xs) !important; font-size:13px; color:var(--mute); line-height:1.5; }
+  .result-actions { margin-top:var(--s-lg); }
+  .evidence-h { margin:40px 0 var(--s-sm); font-size:15px; color:var(--mute); }
+  .evidence { border-top:1px solid var(--hairline); }
+  details.section-details { border-bottom:1px solid var(--hairline); }
+  details.section-details > summary { display:flex; flex-wrap:wrap; align-items:baseline; gap:var(--s-xs) var(--s-md); cursor:pointer;
+                                      list-style:none; padding:14px 0; font-size:15px; font-weight:600; color:var(--ink); }
+  details.section-details > summary::-webkit-details-marker { display:none; }
+  details.section-details > summary::before { content:"\203A"; display:inline-block; width:12px; color:var(--mute); transition:transform 150ms var(--ease); }
+  details.section-details[open] > summary::before { transform:rotate(90deg); }
+  details.section-details > summary .muted { font-size:13px; font-weight:400; }
+  details.section-details > :not(summary) { margin-top:0; margin-bottom:var(--s-lg); }
   .results td { font-size:14px; vertical-align:top; }
   .results td.q { min-width:190px; }
   .results td.ch { min-width:220px; }
@@ -275,21 +437,27 @@
   .hyp li { margin:0 0 var(--s-sm); }
 
   /* Report preview */
-  .preview-wrap { margin-top:var(--s-xl); border:1px solid var(--hairline-strong); border-radius:var(--r-sm); background:var(--canvas); }
-  .preview { display:block; width:100%; height:min(72vh, 900px); border:0; }
+  .preview-wrap { max-width:940px; margin:var(--s-lg) auto 0; border:1px solid var(--hairline); border-radius:12px; overflow:hidden; background:#ffffff; }
+  .preview { display:block; width:100%; height:900px; border:0; }
 
   [hidden] { display:none !important; }
 
+  /* Narrower: the current test and its controls come first; stage history moves below */
+  @media (max-width:1100px) {
+    .run-top .run-actions { justify-content:flex-start; }
+  }
   @media (max-width:900px) {
-    .run-grid, .run-grid-even { grid-template-columns:minmax(0, 1fr); }
+    .run-layout, .run-grid-even, .side-col, .outcome, .readiness, .tech-grid { grid-template-columns:minmax(0, 1fr); }
+    .ready-bar { margin-bottom:var(--s-xl); }
+    .outcome-side { border-left:none; padding-left:0; border-top:1px solid var(--hairline); padding-top:var(--s-lg); }
+    .fields-4 { grid-template-columns:repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width:640px) {
-    .topbar-inner { padding:var(--s-md) var(--s-lg); }
-    .steps ol { padding:var(--s-sm) var(--s-lg); }
+    .topbar-inner { padding:var(--s-sm) var(--s-lg) 0; }
+    .steps ol { padding:var(--s-xs) var(--s-lg) 10px; }
     main { padding:var(--s-lg) var(--s-lg) var(--s-xxl); }
     section.screen { padding:var(--s-xl) var(--s-lg); }
-    .grid { grid-template-columns:1fr; gap:var(--s-sm); }
-    .grid label { margin-top:var(--s-sm); padding-top:0; }
+    .fields-2, .quick { grid-template-columns:minmax(0, 1fr); }
     input[type=text], select { max-width:none; }
     .actions button { flex:1 1 auto; }
     .lamps { grid-template-columns:1fr; }
@@ -303,29 +471,21 @@
 </head>
 <body>
 <a class="skip" href="#app">Skip to content</a>
-<div class="sticky-top">
-  <div id="sim-banner" role="status"></div>
-  <div id="fault-banner" role="alert" hidden>
-    <span id="fault-text"></span>
-    <button type="button" id="btn-reset-sim">Reset simulation</button>
-  </div>
-</div>
 <header class="topbar">
   <div class="topbar-inner">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <h1>Virtual IGBT test cell <span>— operator workflow prototype</span></h1>
+      <h1>IGBT Test Cell</h1>
     </div>
     <span id="profile-badge" class="badge"></span>
-    <button type="button" id="open-limitations" class="on-dark" aria-haspopup="dialog">Limitations</button>
+    <button type="button" id="theme-toggle" class="quiet theme-toggle" aria-pressed="false">Dark mode</button>
   </div>
 </header>
 <nav class="steps" aria-label="Workflow">
   <ol id="workflow-steps">
-    <li data-step="1"><span class="n">1</span> Setup</li>
-    <li data-step="2"><span class="n">2</span> Pre-check</li>
-    <li data-step="3"><span class="n">3</span> Run</li>
-    <li data-step="4"><span class="n">4</span> Result</li>
+    <li data-step="1"><span class="n">1</span> Prepare module</li>
+    <li data-step="2"><span class="n">2</span> Check readiness</li>
+    <li data-step="3"><span class="n">3</span> Run tests</li>
+    <li data-step="4"><span class="n">4</span> Review outcome</li>
     <li data-step="5"><span class="n">5</span> Report</li>
   </ol>
 </nav>
@@ -333,41 +493,51 @@
 <main id="app" tabindex="-1">
   <!-- Screen 1: Setup -->
   <section id="screen-setup" class="screen" aria-labelledby="h-setup" hidden>
-    <p class="eyebrow">Screen 1 · Step 1 of 5</p>
-    <h2 id="h-setup" tabindex="-1">Setup</h2>
-    <div class="meta"><span>Run ID <strong id="run-id" translate="no"></strong></span></div>
-    <div class="grid">
-      <label for="in-module-id">Module ID</label><input type="text" id="in-module-id" name="module_id" autocomplete="off" spellcheck="false">
-      <label for="in-profile">Profile</label>
-      <div class="inline"><select id="in-profile" name="profile"></select> <span id="profile-forced" class="muted" hidden>Set by the scenario</span></div>
-      <label for="in-scenario">Scenario</label>
-      <div><select id="in-scenario" name="scenario"></select><div id="scenario-overrides" class="muted field-note" aria-live="polite"></div></div>
-      <label for="in-seed">Seed</label><input type="text" id="in-seed" name="seed" inputmode="numeric" autocomplete="off" spellcheck="false">
-      <label for="in-noise">Noise</label>
-      <div><select id="in-noise" name="noise"></select><div id="noise-note" class="muted field-note" aria-live="polite"></div></div>
-      <label for="in-speed">Speed</label><select id="in-speed" name="speed"></select>
-      <label for="in-operator">Operator</label><input type="text" id="in-operator" name="operator" autocomplete="off" placeholder="Name or initials…">
+    <div class="setup-head">
+      <p class="eyebrow">Step 1 of 5</p>
+      <h2 id="h-setup" tabindex="-1">Prepare module</h2>
+      <div class="meta"><span>Run ID <strong id="run-id" translate="no"></strong></span></div>
     </div>
 
-    <div id="custom-panel" class="panel" hidden>
-      <h3>Custom module parameters</h3>
-      <p class="muted">Fictional module; values are illustrative. Values are checked by the configuration preflight.</p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th scope="col">Parameter</th><th scope="col">Value</th><th scope="col">Unit</th><th scope="col">Note</th></tr></thead>
-          <tbody id="custom-body"></tbody>
-        </table>
+    <div class="setup-body">
+      <div class="field">
+        <label for="in-module-id">Module ID</label>
+        <input type="text" id="in-module-id" name="module_id" autocomplete="off" spellcheck="false">
       </div>
-      <button type="button" id="btn-reset-custom">Reset to defaults</button>
+      <div class="field">
+        <label for="in-operator">Operator</label>
+        <input type="text" id="in-operator" name="operator" autocomplete="off" placeholder="Name or initials…">
+      </div>
     </div>
 
-    <div class="actions"><button type="button" class="primary" id="btn-continue">CONTINUE</button></div>
+    <!-- Run configuration, not part of the operator flow: a supported scenario preset is chosen at random once per
+         new test (ui.js choosePreset) and held for the run; playback 16×; standard profile; noise off. The JSON
+         report records scenario_id, seed and every input, so each run stays reproducible. -->
+    <div id="run-config" hidden>
+      <select id="in-scenario" name="scenario" aria-hidden="true" tabindex="-1"></select>
+      <div id="scenario-overrides"></div>
+      <select id="in-profile" name="profile" aria-hidden="true" tabindex="-1"></select>
+      <span id="profile-forced" hidden></span>
+      <select id="in-noise" name="noise" aria-hidden="true" tabindex="-1"></select>
+      <div id="noise-note"></div>
+      <input type="text" id="in-seed" name="seed" aria-hidden="true" tabindex="-1">
+      <select id="in-speed" name="speed" aria-hidden="true" tabindex="-1"></select>
+      <span id="advanced-summary"></span>
+      <div id="custom-panel" hidden>
+        <table><tbody id="custom-body"></tbody></table>
+        <button type="button" id="btn-reset-custom" tabindex="-1">Reset to defaults</button>
+      </div>
+    </div>
+
+    <div class="setup-actions">
+      <button type="button" class="primary" id="btn-continue">Check readiness</button>
+    </div>
   </section>
 
   <!-- Screen 1a: Validation error -->
   <section id="screen-invalid" class="screen" aria-labelledby="h-invalid" hidden>
-    <p class="eyebrow">Screen 1a · Configuration preflight</p>
-    <h2 id="h-invalid" tabindex="-1">Validation error</h2>
+    <p class="eyebrow">Step 1 of 5</p>
+    <h2 id="h-invalid" tabindex="-1">Check the configuration</h2>
     <div class="meta" id="invalid-run"></div>
     <p class="alert" id="invalid-count" role="alert"></p>
     <div class="table-wrap">
@@ -377,196 +547,226 @@
       </table>
     </div>
     <div class="actions">
-      <button type="button" class="btn-back">Back to setup</button>
-      <button type="button" class="primary" disabled>START</button>
+      <button type="button" class="btn-back">Back</button>
+      <button type="button" class="primary" disabled>Start test</button>
     </div>
   </section>
 
   <!-- Screen 1b: Configuration blocked -->
   <section id="screen-blocked" class="screen" aria-labelledby="h-blocked" hidden>
-    <p class="eyebrow">Screen 1b · Configuration preflight</p>
+    <p class="eyebrow">Step 1 of 5</p>
     <h2 id="h-blocked" tabindex="-1">Configuration blocked</h2>
     <div class="meta" id="blocked-run"></div>
     <p class="alert alert-warn" id="blocked-text" role="status"></p>
-    <div class="verdict-row"><span>Overall</span> <span class="verdict verdict-ne">NOT EVALUATED</span></div>
-    <p id="blocked-label"></p>
-    <p class="muted" id="blocked-reason"></p>
+    <p id="blocked-label" hidden></p>
+    <p class="muted small" id="blocked-reason"></p>
     <div class="actions">
-      <button type="button" class="btn-back">Back to setup</button>
+      <button type="button" class="btn-back">Back</button>
       <button type="button" id="btn-export-blocked">Download JSON</button>
-      <button type="button" class="primary" id="btn-blocked-report">View report</button>
+      <button type="button" class="primary" id="btn-blocked-report">Open report</button>
     </div>
   </section>
 
   <!-- Screen 2: Pre-check -->
   <section id="screen-precheck" class="screen" aria-labelledby="h-precheck" hidden>
-    <p class="eyebrow">Screen 2 · Step 2 of 5</p>
-    <h2 id="h-precheck" tabindex="-1">Pre-check</h2>
-    <div class="meta" id="precheck-run"></div>
-    <p class="muted lead">Configuration preflight passed. Every interlock must read OK before START is enabled.</p>
-    <ul class="lamps" id="lamps" aria-label="Interlocks IL1 to IL7"></ul>
-    <p class="alert alert-warn" id="precheck-status" role="status" hidden></p>
-    <div class="actions">
-      <button type="button" class="btn-back">Back to setup</button>
-      <button type="button" class="primary" id="btn-start">START</button>
+    <p class="eyebrow">Step 2 of 5</p>
+    <h2 id="h-precheck" tabindex="-1">Check readiness</h2>
+    <!-- Two summary rows derived from the interlock states (ui.js renderLamps): module = IL4 + IL5, bench = the rest -->
+    <ul class="readiness" aria-label="Readiness">
+      <li class="rd" id="ready-module"><span class="rd-dot" aria-hidden="true"></span><span class="rd-name">Module connected</span><span class="rd-state"></span><span class="rd-src"></span></li>
+      <li class="rd" id="ready-bench"><span class="rd-dot" aria-hidden="true"></span><span class="rd-name">Bench ready</span><span class="rd-state"></span><span class="rd-src"></span></li>
+    </ul>
+    <div class="ready-bar">
+      <p class="ready" id="precheck-ready" role="status" hidden></p>
+      <p class="alert alert-warn" id="precheck-status" role="status" hidden></p>
+      <div class="actions ready-actions">
+        <button type="button" class="btn-back">Back</button>
+        <button type="button" class="primary" id="btn-start">Start test</button>
+      </div>
     </div>
+    <details class="section-details" id="precheck-interlocks">
+      <summary>Safety interlocks <span class="muted" id="interlock-sum"></span></summary>
+      <ul class="lamps" id="lamps" aria-label="Interlocks IL1 to IL7"></ul>
+    </details>
+    <details class="section-details">
+      <summary>Run details</summary>
+      <div class="meta" id="precheck-run"></div>
+    </details>
   </section>
 
   <!-- Screen 3: Run -->
   <section id="screen-run" class="screen" aria-labelledby="h-run" hidden>
-    <p class="eyebrow">Screen 3 · Step 3 of 5</p>
-    <h2 id="h-run" tabindex="-1">Run</h2>
-    <div class="meta" id="run-meta"></div>
-
-    <div class="run-head">
-      <div class="state-line"><span class="k">Run state</span> <span id="run-state" class="st"></span></div>
-      <div class="clocks" aria-live="off">
-        <div class="clock"><span class="k">Estimated physical time</span><span class="v" id="clock-phys"></span></div>
-        <div class="clock"><span class="k">Animation time</span><span class="v" id="clock-anim"></span></div>
-        <div class="clock"><span class="k">Speed</span><span class="v" id="clock-speed"></span></div>
-      </div>
-    </div>
-    <p class="caption" id="clock-caption"></p>
-
-    <div class="run-grid">
-      <div class="block">
-        <h3>Stages</h3>
-        <ol class="stage-list" id="stage-list"></ol>
-      </div>
-      <div class="block">
-        <h3>Active stage</h3>
-        <div id="active-stage"></div>
-        <h3 class="sub">Readings <span id="readings-of" class="muted"></span></h3>
-        <div id="reading-cards"></div>
-        <div id="equation" class="equation" hidden></div>
-      </div>
-    </div>
-
-    <div class="run-grid run-grid-even">
-      <div class="block">
-        <h3>Bench state</h3>
-        <dl class="kv" id="bench"></dl>
-        <div class="meter" aria-hidden="true"><span id="bus-bar"></span></div>
-        <p class="muted small" id="bus-scale"></p>
-      </div>
-      <div class="block">
-        <h3>Demo controls</h3>
-        <p class="muted small">Each control is an abort trigger while a stage runs. During the safe-state procedure it is logged as a WARNING and ignored.</p>
-        <div class="controls">
-          <button type="button" class="danger" id="btn-abort">Abort</button>
-          <button type="button" class="danger" id="btn-door">Open door</button>
-          <button type="button" class="danger" id="btn-heartbeat">Heartbeat loss</button>
+    <div class="run-top">
+      <div>
+        <p class="eyebrow">Step 3 of 5</p>
+        <div class="run-title">
+          <h2 id="h-run" tabindex="-1">Run tests</h2>
+          <span id="run-state" class="st"></span>
         </div>
       </div>
+      <div class="run-actions">
+        <p class="enc-pill" id="run-enclosure" role="status"></p>
+        <button type="button" class="danger stop" id="btn-abort">Stop test</button>
+        <button type="button" id="btn-run-new" hidden>New test</button>
+        <button type="button" class="primary" id="btn-view-result" disabled>Review outcome</button>
+      </div>
     </div>
 
-    <div class="block block-wide">
-      <h3>Event log</h3>
+    <div class="run-layout">
+      <div class="block current-col">
+        <h3>Current check</h3>
+        <div id="active-stage" class="active-zone"></div>
+        <div class="readings-zone">
+          <h3 class="sub"><span id="readings-kind">Last completed check</span> <span id="readings-of" class="muted"></span></h3>
+          <div id="reading-cards"></div>
+        </div>
+      </div>
+      <div class="side-col">
+        <div class="block bench-col">
+          <h3>Bench</h3>
+          <dl class="kv" id="bench"></dl>
+          <div class="meter" aria-hidden="true"><span id="bus-bar"></span></div>
+          <p class="muted small" id="bus-scale"></p>
+        </div>
+        <div class="stages-col">
+          <h3>Checks</h3>
+          <ol class="stage-list" id="stage-list"></ol>
+        </div>
+        <details class="inline-details fault-sim">
+          <summary>Inject a fault</summary>
+          <div class="controls">
+            <button type="button" class="danger" id="btn-door">Open door</button>
+            <button type="button" class="danger" id="btn-heartbeat">Heartbeat loss</button>
+          </div>
+          <p class="muted small">Each stops a running check. During the safe-state procedure it is only logged (WARNING).</p>
+        </details>
+      </div>
+    </div>
+
+    <details class="section-details" id="run-tech">
+      <summary>Technical details <span class="muted">clocks, model</span></summary>
+      <div class="tech-grid">
+        <div>
+          <div class="clocks" aria-live="off">
+            <div class="clock"><span class="k">Estimated physical time</span><span class="v" id="clock-phys"></span></div>
+            <div class="clock"><span class="k">Animation time</span><span class="v" id="clock-anim"></span></div>
+            <div class="clock"><span class="k">Speed</span><span class="v" id="clock-speed"></span></div>
+          </div>
+          <div class="meta" id="run-meta"></div>
+        </div>
+      </div>
+      <div id="equation" class="equation" hidden></div>
+    </details>
+    <details class="log-details" id="log-details">
+      <summary>Event log <span class="muted" id="log-count"></span></summary>
       <div class="log-wrap" id="log-wrap" tabindex="0" aria-label="Event log">
         <table class="log">
           <thead><tr><th scope="col">#</th><th scope="col">Physical s</th><th scope="col">Animation s</th><th scope="col">Stage</th><th scope="col">Event</th><th scope="col">Detail</th></tr></thead>
           <tbody id="log-body"></tbody>
         </table>
       </div>
-    </div>
-
-    <div class="actions">
-      <button type="button" id="btn-run-new" hidden>New run</button>
-      <button type="button" class="primary" id="btn-view-result" disabled>VIEW RESULT</button>
-    </div>
+    </details>
   </section>
 
   <!-- Screen 4: Result -->
   <section id="screen-result" class="screen" aria-labelledby="h-result" hidden>
-    <p class="eyebrow">Screen 4 · Step 4 of 5</p>
-    <h2 id="h-result" tabindex="-1">Result</h2>
-    <div class="meta" id="result-meta"></div>
-    <div class="meta" id="result-inputs"></div>
-    <div class="meta" id="result-noise" hidden></div>
+    <p class="eyebrow">Step 4 of 5</p>
+    <h2 id="h-result" tabindex="-1">Review outcome</h2>
 
-    <div class="verdict-block">
-      <div class="verdict-row"><span>Overall</span> <span id="result-verdict" class="verdict"></span></div>
-      <p class="verdict-label" id="result-label"></p>
-      <p class="muted" id="result-precedence"></p>
-      <p class="muted" id="result-reasons"></p>
+    <!-- Outcome card: kind (from overall verdict, abort reason and final state), concise reason, enclosure
+         status and, while access is locked out, the Reset bench action. Shown once. -->
+    <div class="outcome" id="result-outcome">
+      <div>
+        <p class="oc-kind" id="result-kind"></p>
+        <div class="oc-detail" id="result-kind-detail"></div>
+        <span id="result-verdict" hidden></span><span id="result-label" hidden></span><span id="result-precedence" hidden></span>
+        <div class="meta" id="result-noise" hidden></div>
+      </div>
+      <div class="outcome-side">
+        <p class="k">Enclosure</p>
+        <div id="result-enclosure"></div>
+        <button type="button" class="danger" id="btn-reset-sim" hidden>Reset bench</button>
+      </div>
     </div>
 
-    <h3 class="section-h">Readings</h3>
-    <div class="table-wrap">
-      <table class="results">
-        <thead><tr><th scope="col">Test</th><th scope="col">Quantity</th><th scope="col">Value</th><th scope="col">Rule</th><th scope="col">Basis · reference · approval</th><th scope="col">Margin</th><th scope="col">Verdict</th></tr></thead>
-        <tbody id="result-body"></tbody>
-      </table>
+    <div class="actions result-actions">
+      <button type="button" class="primary" id="btn-view-report">View report</button>
+      <button type="button" id="btn-result-new">New test</button>
+      <button type="button" class="quiet" id="btn-download-json">Download JSON</button>
     </div>
 
-    <div class="run-grid run-grid-even">
-      <div class="block">
-        <h3>Hypotheses (not diagnoses)</h3>
+    <!-- Evidence: each part on demand; the summary lines carry the key figures -->
+    <h3 class="evidence-h">Evidence</h3>
+    <div class="evidence">
+      <details class="section-details" id="ev-readings">
+        <summary>Readings <span class="muted" id="result-readings-count"></span></summary>
+        <div class="table-wrap">
+          <table class="results">
+            <thead><tr><th scope="col">Test</th><th scope="col">Reading</th><th scope="col">Value</th><th scope="col">Reference range</th><th scope="col">Margin</th><th scope="col">Result</th></tr></thead>
+            <tbody id="result-body"></tbody>
+          </table>
+        </div>
+      </details>
+      <details class="section-details" id="ev-hyp">
+        <summary>Possible causes <span class="muted" id="result-hyp-count"></span></summary>
         <ul class="hyp" id="result-hyp"></ul>
-      </div>
-      <div class="block">
-        <h3>Safe state</h3>
+      </details>
+      <details class="section-details" id="ev-safe">
+        <summary>Safe-state record</summary>
         <dl class="kv" id="result-safe"></dl>
-      </div>
-    </div>
-
-    <div class="block block-wide">
-      <h3>Clocks</h3>
-      <div class="clocks">
-        <div class="clock"><span class="k">Estimated physical total</span><span class="v" id="result-phys"></span></div>
-        <div class="clock"><span class="k">Animation total</span><span class="v" id="result-anim"></span></div>
-      </div>
-      <p class="caption" id="result-caption"></p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th scope="col">Stage</th><th scope="col">Status</th><th scope="col">Physical components</th><th scope="col">Estimate s</th></tr></thead>
-          <tbody id="result-clock-body"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="actions">
-      <button type="button" id="btn-result-new">New run</button>
-      <button type="button" id="btn-download-json">Download JSON</button>
-      <button type="button" class="primary" id="btn-view-report">VIEW REPORT</button>
+      </details>
+      <details class="section-details" id="ev-timing">
+        <summary>Timing <span class="muted" id="result-timing-sum"></span></summary>
+        <div class="clocks">
+          <div class="clock"><span class="k">Estimated physical total</span><span class="v" id="result-phys"></span></div>
+          <div class="clock"><span class="k">Animation total</span><span class="v" id="result-anim"></span></div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Stage</th><th scope="col">Status</th><th scope="col">Physical components</th><th scope="col">Estimate s</th></tr></thead>
+            <tbody id="result-clock-body"></tbody>
+          </table>
+        </div>
+      </details>
+      <details class="section-details" id="ev-ids">
+        <summary>Identifiers and inputs</summary>
+        <div class="meta" id="result-meta"></div>
+        <p class="muted small" id="result-reasons"></p>
+        <div class="meta" id="result-inputs"></div>
+      </details>
     </div>
   </section>
 
   <!-- Screen 5: Report -->
   <section id="screen-report" class="screen" aria-labelledby="h-report" hidden>
-    <p class="eyebrow">Screen 5 · Step 5 of 5</p>
+    <p class="eyebrow">Step 5 of 5</p>
     <h2 id="h-report" tabindex="-1">Report</h2>
     <div class="meta" id="report-meta"></div>
-    <p class="muted lead">Preview of the HTML report (05 §10). Print / Save PDF prints this report only; choose “Save as PDF” in the print dialog. The banner and footer repeat on every printed page.</p>
+    <div class="ai-bar" id="ai-bar" hidden>
+      <button type="button" id="btn-ai-generate">Generate AI analysis</button>
+      <p class="muted small" id="ai-status" role="status" aria-live="polite"></p>
+    </div>
     <div class="preview-wrap">
       <iframe id="report-preview" class="preview" title="HTML report preview"></iframe>
     </div>
     <p class="muted small" id="report-files"></p>
     <p class="alert alert-warn" id="report-print-note" role="status" hidden></p>
     <div class="actions">
-      <button type="button" id="btn-report-back">Back to result</button>
-      <button type="button" id="btn-report-new">New run</button>
+      <button type="button" class="primary" id="btn-report-print">Save PDF</button>
       <button type="button" id="btn-report-json">Download JSON</button>
       <button type="button" id="btn-report-html">Download HTML</button>
-      <button type="button" class="primary" id="btn-report-print">Print / Save PDF</button>
+      <button type="button" class="quiet" id="btn-report-back">Back to outcome</button>
+      <button type="button" class="quiet" id="btn-report-new">New test</button>
     </div>
   </section>
 </main>
 
 <footer>
   <div class="footer-inner">
-    <span><strong>IGBT Test Cell</strong> · virtual prototype <span id="footer-version"></span></span>
-    <span id="footer-text"></span>
+    <span><strong>IGBT Test Cell</strong> <span id="footer-version"></span></span>
   </div>
 </footer>
 
-<dialog id="limitations" aria-labelledby="limitations-title">
-  <h2 id="limitations-title">Limitations</h2>
-  <p id="limitations-text"></p>
-  <h3>Chip legend</h3>
-  <ul id="chip-legend"></ul>
-  <button type="button" id="close-limitations">Close</button>
-</dialog>
 
 <script src="js/data.js"></script>
 <script src="js/validate.js"></script>

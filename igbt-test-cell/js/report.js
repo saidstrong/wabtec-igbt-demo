@@ -145,7 +145,7 @@ window.IGBT.report = (function () {
     return true;
   }
   function download(report) { return saveBlob(serialise(report) + "\n", "application/json", fileName(report, "json")); }
-  function downloadHtml(report) { return saveBlob(buildHtml(report), "text/html", fileName(report, "html")); }
+  function downloadHtml(report, opts) { return saveBlob(buildHtml(report, opts), "text/html", fileName(report, "html")); }
 
   // ---- Shared display text: the Result screen and the HTML report use these, so they agree ----
   function dpOf(q) { var d = D().display_decimals[q]; return d === undefined ? 2 : d; }
@@ -248,201 +248,213 @@ window.IGBT.report = (function () {
     }).join(tag("span", { "class": "sep" }, " · "));
   }
 
+  // ---- Outcome helpers shared by the Result screen and the HTML report (display only; never change a verdict) ----
+  // Counts: readings by verdict, stages by status. "Evaluated" readings are those judged PASS or FAIL.
+  function countsOf(det) {
+    var r = { PASS: 0, FAIL: 0, "NOT RUN": 0, INFO: 0, total: 0 }, s = { total: 0 };
+    det.stages.forEach(function (st) {
+      s.total++; s[st.status] = (s[st.status] || 0) + 1;
+      st.readings.forEach(function (x) { r.total++; r[x.verdict] = (r[x.verdict] || 0) + 1; });
+    });
+    r.evaluated = r.PASS + r.FAIL;
+    return { readings: r, stages: s };
+  }
+  function countsText(det) {
+    var c = countsOf(det), r = c.readings, s = c.stages, rp = [], sp = [];
+    rp.push(r.evaluated + " evaluated (" + r.PASS + " passed, " + r.FAIL + " failed)");
+    if (r["NOT RUN"]) rp.push(r["NOT RUN"] + " not run");
+    if (r.INFO) rp.push(r.INFO + " info only");
+    sp.push((s.DONE || 0) + " of " + s.total + " done");
+    ["BLOCKED", "INTERRUPTED", "NOT_RUN", "NOT_APPLICABLE", "NOT_MODELLED"].forEach(function (k) {
+      if (s[k]) sp.push(s[k] + " " + statusText(k).toLowerCase());
+    });
+    return { readings: "Readings: " + rp.join(" · "), stages: "Stages: " + sp.join(" · ") };
+  }
+  // Why a run stopped, in plain words (from the overall abort reason and the ABORT_TRIGGER event)
+  function abortText(det) {
+    var reason = det.overall.abort_reason;
+    if (!reason || reason === "SAFE_STATE_NOT_VERIFIED") return "";
+    var trig = det.events.filter(function (e) { return e.type === "ABORT_TRIGGER"; })[0];
+    var where = trig ? " during " + (trig.stage || "the run") + " at " + secText(trig.physical_time_s) : "";
+    if (reason === "OPERATOR") return "Stopped by the operator" + where + ".";
+    if (reason === "WATCHDOG") return "Controller heartbeat lost" + where + "; the bench stopped the run.";
+    var il = D().interlocks.filter(function (x) { return x.id + "_OPEN" === reason; })[0];
+    if (il) return "Interlock " + il.id + " opened (" + il.short + ")" + where + "; the bench stopped the run.";
+    return "Stopped: " + reason + where + ".";
+  }
+  // Safe-state verification in words. With the meter unavailable, the retained voltage is a model estimate.
+  function verificationText(ss) {
+    if (!ss) return "not run";
+    if (ss.verification === "VERIFIED") return "discharge verified · bus " + F().fixed(ss.v_bus_at_verification_v, 2) + " V at verification";
+    if (ss.verification === "DISCHARGE_FAILED") return "discharge not verified · bus " + F().fixed(ss.v_bus_at_verification_v, 2) + " V at verification (did not reach the safe level)";
+    if (ss.verification === "VERIFICATION_UNAVAILABLE") return "discharge not verified · verification meter unavailable; not measured";
+    return ss.verification;
+  }
+  function vBusVerifyText(ss) {
+    if (ss.verification === "VERIFICATION_UNAVAILABLE")
+      return "not measured (verification unavailable) · model estimate " + F().fixed(ss.v_bus_at_verification_v, 2) + " V";
+    return F().fixed(ss.v_bus_at_verification_v, 2) + " V";
+  }
+  // Key findings, most urgent first: unresolved safe state, failed checks, interruption, configuration block,
+  // checks that did not run. Each has a kind (safety, fail, stop, block, note) and plain text.
+  function keyFindings(det) {
+    var f = [], o = det.overall, ss = det.safe_state;
+    if (ss && ss.final_state === "FAULT_LOCKED") f.push({ kind: "safety", text: "Safe state not verified: " +
+      (ss.verification === "VERIFICATION_UNAVAILABLE" ? "the verification meter was unavailable, so the discharge could not be confirmed"
+        : "the bus did not discharge to the safe level within the timeout") + ". Enclosure kept locked; access locked out." });
+    det.stages.forEach(function (st) {
+      st.readings.forEach(function (r) {
+        if (r.verdict !== "FAIL") return;
+        var u = unitOf(r) && r.value !== null ? " " + unitOf(r) : "";
+        f.push({ kind: "fail", text: st.test_id + " · " + r.label + ": " + valueText(r) + u + " against " + ruleText(r) + " (margin " + marginText(r) + ")." });
+      });
+    });
+    var stop = abortText(det);
+    if (stop) f.push({ kind: "stop", text: "Run interrupted. " + stop + " No module verdict." });
+    if (o.block_reason) f.push({ kind: "block", text: D().fixed_texts.config_blocked });
+    var blocked = det.stages.filter(function (st) { return st.status === "BLOCKED"; });
+    if (blocked.length) f.push({ kind: "note", text: "Not run because a prerequisite did not pass: " +
+      blocked.map(function (st) { return st.test_id + (st.blocked_reason ? " (" + st.blocked_reason + ")" : ""); }).join(", ") + "." });
+    return f;
+  }
+  text.countsOf = countsOf; text.countsText = countsText; text.abortText = abortText;
+  text.verificationText = verificationText; text.vBusVerifyText = vBusVerifyText; text.keyFindings = keyFindings;
+
+  // Outcome kind shared by the Result screen and the report (display only; from the overall verdict, abort
+  // reason and final state, never from the scenario)
+  function outcomeKind(det) {
+    var o = det.overall, ss = det.safe_state, nFail = countsOf(det).readings.FAIL;
+    if (ss && ss.final_state === "FAULT_LOCKED") return { kind: "benchfault", title: "Bench fault · safe state not verified" };
+    if (o.verdict === "FAIL") return { kind: "fail", title: "Module failed · " + nFail + (nFail === 1 ? " check" : " checks") };
+    if (o.verdict === "ABORTED") return { kind: "interrupted", title: "Test interrupted" };
+    if (o.verdict === "PASS") return { kind: "pass", title: "All evaluated checks passed" };
+    if (o.verdict === "NOT EVALUATED") return { kind: "blocked", title: "Not evaluated · configuration blocked" };
+    return { kind: "incomplete", title: o.verdict === "INCOMPLETE" ? "Test incomplete" : o.verdict };
+  }
+  text.outcomeKind = outcomeKind;
+
+  // Report styling: light, print-first, two sections (A. Test results, B. AI analysis), compact header.
   var CSS = [
     "*{box-sizing:border-box}",
     "html{-webkit-print-color-adjust:exact;print-color-adjust:exact}",
-    "body{margin:0;font:400 13px/1.45 Arial,sans-serif;color:#1a1a1a;background:#fff}",
-    "h1,h2,h3{color:#000;font-weight:700;line-height:1.25;margin:0}",
-    "h1{font-size:22px}h2{font-size:15px;margin:0 0 8px;padding-top:6px;border-top:2px solid #000}",
-    ".pbanner{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:center;gap:10px;background:#feeeb2;color:#000;font-weight:700;font-size:13px;text-align:center;padding:7px 12px;border-bottom:1px solid #000}",
-    ".pbanner:before{content:\"\";flex:none;width:10px;height:10px;background:#000}",
-    ".pfooter{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 16px;background:#000;color:#fff;font-size:11px;padding:7px 12px}",
-    ".page{width:100%;border-collapse:collapse}.page>thead>tr>td,.page>tfoot>tr>td,.page>tbody>tr>td{padding:0;border:none}",
-    ".hspace,.fspace{display:none}",
-    ".wrap{max-width:1180px;margin:0 auto;padding:18px 20px 28px}",
-    ".title{display:flex;align-items:flex-start;gap:12px;padding-bottom:10px}.mark{flex:none;width:14px;height:14px;margin-top:5px;background:#76b900}",
-    ".meta{margin:4px 0 0;color:#5e5e5e;font-size:12px}.meta b{color:#000}",
-    ".sec{margin-top:18px;break-inside:auto}",
-    ".verdict{display:inline-block;font-size:17px;font-weight:700;padding:5px 12px;border:2px solid #5e5e5e;background:#f7f7f7;color:#000}",
-    ".v-pass{border-color:#3f8500;color:#3f8500;background:#fff}.v-fail{border-color:#e52020;color:#650b0b;background:#fff}",
-    ".v-abort{border-color:#df6500;background:#fff}.v-ne{border-color:#5e5e5e}",
-    ".label{font-weight:700;color:#000;margin:6px 0 2px}.muted{color:#5e5e5e}",
-    ".lock{margin:8px 0 0;padding:7px 12px;background:#e52020;color:#fff;font-weight:700}",
+    "body{margin:0;font:400 12.5px/1.5 -apple-system,\"Segoe UI\",Roboto,\"Helvetica Neue\",Arial,sans-serif;color:#1d1d1f;background:#fff}",
+    "h1,h2,h3{color:#1d1d1f;font-weight:600;line-height:1.25;margin:0}",
+    "h1{font-size:20px;letter-spacing:-.01em}",
+    "h2{font-size:15px;margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid #1d1d1f}",
+    "h3{font-size:13px;margin:16px 0 6px;color:#3a3a3c}",
+    ".wrap{max-width:900px;margin:0 auto;padding:22px 24px 32px}",
+    ".rhead{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px 28px;padding-bottom:12px;margin-bottom:6px;border-bottom:1px solid #d2d2d7}",
+    ".ident{display:grid;grid-template-columns:auto auto;gap:1px 12px;margin:0;font-size:11.5px}.ident dt{color:#6e6e73}.ident dd{margin:0;font-weight:600}",
+    ".sub{margin:4px 0 0;font-size:11.5px;color:#6e6e73}",
+    ".sec{margin-top:22px}",
+    ".muted{color:#6e6e73}.small{font-size:11.5px}",
+    ".outcome{margin-right:2px;display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:10px 24px;padding:12px 14px;border:1px solid #d2d2d7;border-left:4px solid #8e8e93;border-radius:6px;break-inside:avoid}",
+    ".outcome.k-pass{border-left-color:#3f8500}.outcome.k-fail,.outcome.k-benchfault{border-left-color:#d91c1c}.outcome.k-interrupted,.outcome.k-blocked,.outcome.k-incomplete{border-left-color:#df6500}",
+    ".outcome p{margin:0}.kind{font-size:17px;font-weight:600}.k-pass .kind{color:#2f6a00}.k-fail .kind,.k-benchfault .kind{color:#8a0f0f}",
+    ".enc{border-left:1px solid #e5e5e7;padding-left:14px}.enc .door{font-size:14px;font-weight:600}.enc .door.locked{color:#8a0f0f}.enc .door.safe{color:#2f6a00}",
+    ".findings{margin:0;padding-left:18px}.findings li{margin:0 0 4px}",
     "table{border-collapse:collapse;width:100%}",
-    "th,td{text-align:left;vertical-align:top;padding:5px 7px;border-bottom:1px solid #ccc}",
-    "thead th{font-size:10px;text-transform:uppercase;letter-spacing:.02em;color:#5e5e5e;background:#f7f7f7;white-space:nowrap}",
+    "th,td{text-align:left;vertical-align:top;padding:5px 7px;border-bottom:1px solid #e5e5e7}",
+    "thead th{font-size:10.5px;font-weight:600;color:#6e6e73;border-bottom:1px solid #8e8e93}",
     "thead{display:table-header-group}tr{break-inside:avoid}",
-    "td{font-variant-numeric:tabular-nums}.nw{white-space:nowrap}",
-    ".kv th{width:190px;font-weight:400;color:#5e5e5e;white-space:nowrap}.kv td{font-weight:700;color:#000}",
-    ".kv td.plain{font-weight:400;color:#1a1a1a}",
-    ".kv td.red{color:#fff;background:#e52020}",
-    "code{font:700 12px/1.4 Arial,sans-serif;color:#000}.sep{color:#a7a7a7}",
-    ".stage td{background:#f7f7f7;border-top:2px solid #000;font-weight:700;color:#000}",
-    ".stage .sn{font-weight:400;color:#1a1a1a}",
-    ".rd td{border-bottom:none;padding-bottom:2px}.rs td{padding-top:0;font-size:11.5px;color:#5e5e5e}.rs b{color:#1a1a1a}",
-    ".nr td{color:#757575}",
-    ".chip{display:inline-block;margin:0 3px 3px 0;font-size:10px;font-weight:700;letter-spacing:.02em;padding:2px 6px;border:1px solid #5e5e5e;background:#f7f7f7;color:#000;white-space:nowrap}",
-    ".chip-na{border-color:#650b0b;color:#650b0b;background:#fff}",
-    ".st{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;padding:2px 6px;border:1px solid #5e5e5e;background:#f7f7f7;color:#000;white-space:nowrap}",
-    ".st-pass{border-color:#3f8500;color:#3f8500;background:#fff}.st-fail{border-color:#e52020;color:#650b0b;background:#fff}",
-    ".box{border:1px solid #ccc;border-left:4px solid #000;padding:8px 12px;background:#f7f7f7}.box ul{margin:0;padding-left:18px}",
-    ".log td{font-size:11.5px}.num{text-align:right;white-space:nowrap}.ty{font-weight:700;color:#000;white-space:nowrap}",
-    ".ev-warn td.ty{box-shadow:inset 3px 0 0 #df6500}.ev-red td.ty{box-shadow:inset 3px 0 0 #e52020;color:#650b0b}",
-    ".clocks{display:flex;flex-wrap:wrap;gap:8px 32px;margin:0 0 6px}.clocks b{display:block;font-size:18px;color:#000}",
-    ".caption{font-size:11.5px;color:#5e5e5e;margin:0 0 8px}",
-    ".legend{margin:0 0 10px;padding:0;list-style:none}.legend li{margin:0 0 3px}",
-    ".limits{max-width:none}",
-    "@page{size:A4 landscape;margin:9mm 10mm}",
-    "@media print{",
-    "  .pbanner{position:fixed;top:0;left:0;right:0}.pfooter{position:fixed;bottom:0;left:0;right:0}",
-    "  .hspace{display:block;height:36px}.fspace{display:block;height:34px}",
-    "  .wrap{max-width:none;padding:6px 0 0}.sec{margin-top:14px}h2{break-after:avoid}",
-    "}"
+    "td{font-variant-numeric:tabular-nums}.num{text-align:right;white-space:nowrap}.u{white-space:nowrap;color:#6e6e73;padding-left:0}",
+    ".stage td{padding-top:12px;border-bottom:1px solid #c7c7cc;font-weight:600}.stage .sn{font-weight:400;color:#6e6e73}",
+    ".q{color:#6e6e73;font-size:11px;margin-right:4px}",
+    ".nr td{color:#8e8e93}",
+    ".st{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;padding:1px 6px;border:1px solid #c7c7cc;border-radius:3px;color:#3a3a3c;white-space:nowrap}",
+    ".st-pass{border-color:#3f8500;color:#2f6a00}.st-fail{border-color:#d91c1c;color:#8a0f0f}",
+    ".ai{margin-right:2px;padding:12px 14px;border:1px solid #c9d3e6;border-radius:6px;background:#f6f8fc}",
+    ".ai .gen{margin:0 0 8px;font-size:11px;color:#4a5568}.ai .sum{margin:0 0 8px;font-size:13px}",
+    ".ai ul{margin:0;padding-left:18px}.ai li{margin:0 0 4px}.ai .cite{color:#4a5568;font-size:11px}",
+    ".ai .bench{margin:8px 0 0;padding-top:6px;border-top:1px solid #dde3ee;font-size:11.5px;color:#3a3a3c}",
+    "@page{size:A4 portrait;margin:12mm}",
+    "@media print{.wrap{max-width:none;padding:0}.sec{margin-top:16px}h2{break-after:avoid}.ai{break-inside:avoid}}"
   ].join("\n");
 
-  function buildHtml(report) {
+  // opts.ai (optional): { model, generated_local, summary, items: [{ ref, value, explanation }] } — text returned by the
+  // AI service for this report. Rendered only in section B; every string is escaped.
+  function buildHtml(report, opts) {
     var det = report.deterministic, inp = det.inputs, o = det.overall, md = report.metadata, ss = det.safe_state;
-    var prof = D().profiles.filter(function (p) { return p.profile_id === inp.profile_id; })[0];
+    var ai = opts && opts.ai ? opts.ai : null;
+    var ok = outcomeKind(det), findings = keyFindings(det), counts = countsText(det);
     var out = [];
 
-    // 1. Banner (repeated on every printed page) and title block
-    out.push(tag("div", { "class": "title" }, tag("span", { "class": "mark" }) + tag("div", null,
-      tag("h1", null, "Virtual IGBT test cell — run report") +
-      tag("p", { "class": "meta" }, "Run ID " + tag("b", null, esc(md.run_id)) + " · date " + tag("b", null, esc(md.created_local)) +
-        " · operator " + tag("b", null, esc(md.operator === null || md.operator === "" ? "—" : md.operator)) +
-        " · software " + tag("b", null, "v" + esc(md.software_version)) + " · schema " + esc(report.schema_version)))));
+    // Compact header: identification, date, version
+    var changed = overridesText(inp);
+    out.push(tag("header", { "class": "rhead" },
+      tag("div", null, tag("h1", null, "IGBT Test Cell — test report")) +
+      tag("dl", { "class": "ident" },
+        tag("dt", null, "Report") + tag("dd", null, esc(md.run_id)) +
+        tag("dt", null, "Module") + tag("dd", null, esc(inp.module_parameters.module_id)) +
+        tag("dt", null, "Operator") + tag("dd", null, esc(md.operator === null || md.operator === "" ? "—" : md.operator)) +
+        tag("dt", null, "Date") + tag("dd", null, esc(md.created_local)) +
+        tag("dt", null, "Version") + tag("dd", null, "v" + esc(md.software_version) + " · schema " + esc(report.schema_version)))));
 
-    // 2. Overall verdict, label, precedence reason, block / abort reason
-    var reasons = [];
-    if (o.block_reason) reasons.push("block_reason: " + o.block_reason);
-    if (o.abort_reason) reasons.push("abort_reason: " + o.abort_reason);
-    reasons.push("is_acceptance_decision: " + o.is_acceptance_decision);
-    out.push(section(2, "Overall",
-      tag("p", null, "Overall " + tag("span", { "class": "verdict " + (VERDICT_CLASS[o.verdict] || "v-ne"), "data-verdict": o.verdict }, esc(o.verdict))) +
-      tag("p", { "class": "label" }, esc(o.verdict_label)) +
-      tag("p", { "class": "muted" }, "Precedence: " + esc(o.precedence_reason)) +
-      tag("p", { "class": "muted" }, esc(reasons.join(" · "))) +
-      (ss && ss.final_state === "FAULT_LOCKED" ? tag("p", { "class": "lock" }, esc(D().fixed_texts.fault_locked_banner)) : "")));
+    // A. Test results: outcome with reason and enclosure status, key findings, readings by stage
+    var enc = !ss ? tag("p", { "class": "door" }, "Not energised") + tag("p", { "class": "small muted" }, "Safe-state procedure not run.")
+      : tag("p", { "class": "door " + (ss.door === "LOCKED" ? "locked" : ss.final_state === "SAFE" ? "safe" : "") }, "Door " + esc(ss.door)) +
+        tag("p", { "class": "small muted" }, "Final state " + esc(statusText(ss.final_state)) + " · " + esc(verificationText(ss))) +
+        (ss.final_state === "FAULT_LOCKED" ? tag("p", { "class": "small" }, "Access locked out until the bench is reset.") : "");
+    var outcome = tag("div", { "class": "outcome k-" + ok.kind, "data-verdict": o.verdict },
+      tag("div", null, tag("p", { "class": "kind" }, esc(ok.title)) + tag("p", null, esc(o.precedence_reason) + ".")) +
+      tag("div", { "class": "enc", "data-door": ss ? ss.door : "NONE", "data-final-state": ss ? ss.final_state : "NONE",
+        "data-verification": ss ? ss.verification : "NONE" }, tag("p", { "class": "small muted" }, "Enclosure") + enc));
+    var fl = findings.length ? tag("ul", { "class": "findings" }, findings.map(function (x) {
+      return tag("li", { "class": "f-" + x.kind }, esc(x.text));
+    }).join("")) : tag("p", null, ss && ss.verification === "VERIFIED" ? "None. Every evaluated reading is within its reference range and the safe state was verified." : "None.");
 
-    // 3. Inputs
-    out.push(section(3, "Inputs", kvTable([
-      ["Module ID", inp.module_parameters.module_id],
-      ["Scenario", inp.scenario_id + " · " + inp.scenario_name],
-      ["Overrides", overridesText(inp)],
-      ["Profile", inp.profile_id + " · version " + inp.profile_version + " · status " + inp.profile_status],
-      ["Profile badge", prof ? prof.profile_badge : "—"],
-      ["Module parameters", paramList(inp.module_parameters, D().module_parameter_units), true, "plain"],
-      ["Bench conditions", paramList(inp.bench_conditions, D().bench_parameter_units), true, "plain"],
-      ["Seed", String(inp.seed)],
-      ["Noise σ (noise_rel_sigma)", String(inp.noise_rel_sigma) + (inp.noise_rel_sigma > 0 ? " — seeded noise " + noiseText(inp) : "")],
-      ["Speed", inp.speed + "×"]
-    ])));
-
-    // 4. Results table: one stage row, then per reading a main row and a conditions / reason row
     var rows = [];
     det.stages.forEach(function (st) {
-      var note = st.blocked_reason ? " — " + st.blocked_reason : st.status_note ? " — " + st.status_note : "";
-      rows.push(row([td(esc(st.test_id) + " " + tag("span", { "class": "sn" }, esc(st.name + " · " + st["class"])) + " · " +
-        tag("span", { "class": "st" }, esc(statusText(st.status))) + tag("span", { "class": "sn" }, esc(note)), { colspan: "9" })],
+      var note = st.blocked_reason ? " — " + st.blocked_reason : "";
+      rows.push(row([td(esc(st.test_id) + " " + tag("span", { "class": "sn" }, esc(st.name)) + " · " +
+        tag("span", { "class": "st" }, esc(statusText(st.status))) + tag("span", { "class": "sn" }, esc(note)), { colspan: "5" })],
         { "class": "stage", "data-stage": st.test_id, "data-status": st.status }));
-      if (!st.readings.length) rows.push(row([td(tag("span", { "class": "muted" }, "No module readings in this stage."), { colspan: "9" })], { "class": "rs" }));
       st.readings.forEach(function (r) {
-        var nr = r.verdict === "NOT RUN" ? " nr" : "";
         rows.push(row([
-          td(esc(st.test_id)),
-          td(tag("b", null, esc(r.quantity_id)) + " " + esc(r.label)),
+          td(tag("span", { "class": "q" }, esc(r.quantity_id)) + esc(r.label)),
           td(esc(valueText(r)), { "class": "v num" }),
-          td(esc(unitOf(r) || "—"), { "class": "nw" }),
-          td(esc(r.observation)),
+          td(esc(unitOf(r)), { "class": "u" }),
           td(esc(ruleText(r))),
-          td(chipTexts(r).map(chipHtml).join(""), { "class": "chips" }),
-          td(esc(marginText(r)), { "class": "num" }),
           td(verdictHtml(r.verdict))
-        ], { "class": "rd" + nr, "data-q": r.quantity_id, "data-verdict": r.verdict }));
-        rows.push(row([td(tag("b", null, "Conditions: ") + esc(r.conditions || "—") + " · " + tag("b", null, "Reason: ") + esc(r.reason) +
-          (r.model_equation ? " · " + tag("b", null, "Model: ") + esc(r.model_equation) : ""), { colspan: "9" })], { "class": "rs" + nr }));
+        ], { "class": "rd" + (r.verdict === "NOT RUN" ? " nr" : ""), "data-q": r.quantity_id, "data-verdict": r.verdict }));
       });
     });
-    out.push(section(4, "Results", tag("table", { "class": "results" },
-      tag("thead", null, row(["Test", "Quantity", "Value", "Unit", "Observation", "Rule", "Basis · reference · approval", "Margin", "Verdict"].map(function (h) { return th(h, { scope: "col" }); }))) +
-      tag("tbody", null, rows.join("")))));
+    var table = tag("table", { "class": "results" },
+      tag("thead", null, row([th("Test", { scope: "col" }), th("Reading", { scope: "col", colspan: "2" }), th("Reference range", { scope: "col" }), th("Result", { scope: "col" })])) +
+      tag("tbody", null, rows.join("")));
+    out.push(tag("section", { "class": "sec" }, tag("h2", null, "A. Test results") + outcome +
+      tag("h3", null, "Key findings") + fl +
+      tag("h3", null, "Readings") + table + tag("p", { "class": "small muted" }, esc(counts.readings) + " · " + esc(counts.stages)) +
+      // Run configuration as a footnote (reproducibility), not in the header
+      tag("p", { "class": "small muted cfg" }, "Run configuration: preset " + esc(inp.scenario_id) + " · seed " + esc(String(inp.seed)) +
+        (changed !== "none (defaults)" ? " · changed inputs: " + esc(changed) : "") +
+        (inp.noise_rel_sigma > 0 ? " · noise σ " + esc(String(inp.noise_rel_sigma) + " — seeded noise " + noiseText(inp)) : ""))));
 
-    // 5. Hypotheses, kept apart from verdicts
-    var hyp = det.hypotheses.length ? det.hypotheses.map(function (h) {
-      return tag("li", null, esc((h.source === "SAFE_STATE" ? "Safe state" : h.source + " (" + h.quantity_ids.join(", ") + ")") + ": " + h.text));
-    }).join("") : tag("li", { "class": "muted" }, "No FAIL recorded; no hypothesis.");
-    out.push(section(5, "Hypotheses (not diagnoses)", tag("div", { "class": "box" }, tag("ul", null, hyp))));
-
-    // 6. Safe-state block; FAULT_LOCKED in red
-    var safe;
-    if (!ss) safe = tag("p", { "class": "muted" }, "Safe-state procedure not run" + (o.block_reason ? " (configuration blocked: nothing was energised)." : "."));
-    else {
-      var locked = ss.final_state === "FAULT_LOCKED";
-      safe = kvTable([
-        ["Trigger", ss.trigger + (o.abort_reason && ss.trigger === "ABORT" ? " (" + o.abort_reason + ")" : "")],
-        ["Gate", "commanded " + (ss.gate_off_commanded ? "OFF" : "—") + " · measured " + F().fixed(ss.gate_measured_v, 1) + " V · " + (ss.gate_off_confirmed ? "OFF confirmed" : "OFF NOT confirmed")],
-        ["HV source", ss.hv_source_disabled ? "disabled" : "enabled"],
-        ["Contactor", ss.contactor_open ? "open" : "closed"],
-        ["v_bus at start", F().fixed(ss.v_bus_at_start_v, 1) + " V"],
-        ["Discharge", ss.discharge_required ? (ss.discharge_time_s === null ? "required; did not reach v_safe" : "required; " + secText(ss.discharge_time_s)) : "not required (DISCHARGE_NOT_REQUIRED)"],
-        ["v_bus at verification", F().fixed(ss.v_bus_at_verification_v, 2) + " V"],
-        ["Verification", ss.verification, false, locked ? "red" : null],
-        ["Door", ss.door, false, locked ? "red" : null],
-        ["Final state", ss.final_state, false, locked ? "red" : null]
-      ]);
+    // B. AI analysis: generated text for this run, kept apart from the recorded results. The bench-status line is
+    // rendered here from the recorded safe-state fields, never from generated text.
+    var bBody;
+    if (ai) {
+      var bench = !ss ? "safe-state procedure not run" : ["final state " + statusText(ss.final_state), verificationText(ss)]
+        .concat(ss.verification === "VERIFICATION_UNAVAILABLE" ? ["bus " + vBusVerifyText(ss)] : [])
+        .concat(["enclosure door " + ss.door]).join(" · ");
+      bBody = tag("div", { "class": "ai", "data-ai": "generated" },
+        tag("p", { "class": "gen" }, "Generated by " + esc(ai.model) + " · " + esc(ai.generated_local) + " · based on section A; recorded results unchanged.") +
+        tag("p", { "class": "sum" }, esc(ai.summary)) +
+        tag("ul", null, (ai.items || []).map(function (it) {
+          // Readable label and recorded value; the validated JSON pointer stays internal
+          var v = typeof it.value === "string" ? it.value : JSON.stringify(it.value);
+          return tag("li", null, esc(it.explanation) + " " + tag("span", { "class": "cite" }, "(" + esc((it.label || "recorded value") + ": " + v + (it.unit ? " " + it.unit : "")) + ")"));
+        }).join("")) +
+        tag("p", { "class": "bench", "data-bench": "recorded" }, "Bench status (recorded, not generated): " + esc(bench) + "."));
+    } else {
+      bBody = tag("p", { "class": "muted", "data-ai": "none" }, "No AI analysis was generated for this run.");
     }
-    out.push(section(6, "Safe state", safe));
-
-    // 7. Event log with both clocks (animation = physical / speed)
-    var ev = det.events.map(function (e) {
-      var cls = e.type === "WARNING" ? "ev-warn" : (e.type === "ABORT_TRIGGER" || e.type === "FAULT_LOCKED" || e.type === "DISCHARGE_FAILED" || e.type === "VERIFICATION_UNAVAILABLE") ? "ev-red" : null;
-      return row([td(String(e.seq), { "class": "num" }), td(F().fixed(e.physical_time_s, 2), { "class": "num" }),
-        td(F().fixed(animationOf(e.physical_time_s, inp.speed), 2), { "class": "num" }), td(esc(e.stage || "—")),
-        td(esc(e.type), { "class": "ty" }), td(esc(e.detail))], { "class": cls, "data-seq": e.seq });
-    }).join("");
-    out.push(section(7, "Event log", tag("table", { "class": "log" },
-      tag("thead", null, row(["#", "Physical s", "Animation s", "Stage", "Event", "Detail"].map(function (h) { return th(h, { scope: "col" }); }))) +
-      tag("tbody", null, ev))));
-
-    // 8. Clocks summary with caption and per-stage physical components
-    var comps = det.stages.map(function (st) {
-      var c = st.physical_components.map(function (x) { return x.basis + " " + F().num(x.seconds) + " s" + (x.note ? " (" + x.note + ")" : ""); }).join(" + ");
-      return row([td(esc(st.test_id + " · " + st.name)), td(esc(statusText(st.status))), td(esc(c || "—")), td(F().fixed(st.physical_estimate_s, 2), { "class": "num" })]);
-    }).join("");
-    out.push(section(8, "Clocks",
-      tag("div", { "class": "clocks" }, tag("span", null, "Estimated physical total" + tag("b", null, secText(det.physical_total_s))) +
-        tag("span", null, "Animation total" + tag("b", null, secText(report.presentation.animation_total_s) + " at " + inp.speed + "×"))) +
-      tag("p", { "class": "caption" }, esc(report.presentation.clock_caption)) +
-      tag("table", null, tag("thead", null, row(["Stage", "Status", "Physical components", "Estimate s"].map(function (h) { return th(h, { scope: "col" }); }))) +
-        tag("tbody", null, comps))));
-
-    // 9. Case reference register entries used in this run
-    var refs = report.case_references.length ? tag("table", null,
-      tag("thead", null, row(["Reference", "Source", "Statement (paraphrase)", "Applies to (per case)"].map(function (h) { return th(h, { scope: "col" }); }))) +
-      tag("tbody", null, report.case_references.map(function (r) {
-        return row([td(tag("b", null, esc(r.reference_id))), td(esc(r.source)), td(esc(r.statement)), td(esc(r.applies_to))]);
-      }).join(""))) : tag("p", { "class": "muted" }, "No case reference cited in this run.");
-    out.push(section(9, "Case references used in this run", tag("p", { "class": "caption" },
-      "A case reference records what the hackathon slides state; it is not an acceptance criterion.") + refs));
-
-    // 10. Chip legend and limitations statement
-    out.push(section(10, "Chip legend and limitations",
-      tag("ul", { "class": "legend" }, D().fixed_texts.chip_legend.map(function (c) { return tag("li", null, chipHtml(c.chip) + " = " + esc(c.meaning)); }).join("")) +
-      tag("p", { "class": "limits" }, esc(report.limitations))));
-
-    // 11. Footer on every printed page; banner on every printed page
-    var banner = tag("div", { "class": "pbanner", role: "note" }, esc(report.simulation_banner));
-    var footer = tag("div", { "class": "pfooter" }, tag("span", null, esc(D().fixed_texts.report_footer)) +
-      tag("span", null, esc(report.simulation_banner)) + tag("span", null, esc(md.run_id + " · v" + md.software_version)));
-    var page = tag("table", { "class": "page", role: "presentation" },
-      tag("thead", null, row([td(tag("div", { "class": "hspace" }))])) +
-      tag("tbody", null, row([td(tag("div", { "class": "wrap" }, out.join("\n")))])) +
-      tag("tfoot", null, row([td(tag("div", { "class": "fspace" }))])));
+    out.push(tag("section", { "class": "sec" }, tag("h2", null, "B. AI analysis") + bBody));
 
     return "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n" +
       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
-      "<title>" + esc("Report " + md.run_id + " — SIMULATION") + "</title>\n<style>\n" + CSS + "\n</style>\n</head>\n<body>\n" +
-      banner + "\n" + page + "\n" + footer + "\n</body>\n</html>\n";
+      "<title>" + esc("IGBT Test Cell report " + md.run_id) + "</title>\n<style>\n" + CSS + "\n</style>\n</head>\n<body>\n" +
+      tag("div", { "class": "wrap" }, out.join("\n")) + "\n</body>\n</html>\n";
   }
 
   return { buildJson: buildJson, buildConfigBlockedJson: buildConfigBlockedJson, serialise: serialise,

@@ -1,7 +1,7 @@
 # IGBT Test Cell
 
 Operator website for the Wabtec IEEE Hackathon case: prepare a module, check readiness, run tests,
-review findings, generate an optional OpenAI analysis, and export PDF, HTML or JSON reports.
+review findings, generate an optional OpenAI analysis, export PDF or JSON reports, and share report PDFs.
 
 ## Deploy your website
 

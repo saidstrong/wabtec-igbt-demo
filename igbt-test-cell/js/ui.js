@@ -709,7 +709,7 @@ window.IGBT.ui = (function () {
     state.view = { from: from, report: rep };
     var o = rep.deterministic.overall, inp = rep.deterministic.inputs;
     $("report-meta").textContent = rep.metadata.run_id + " · module " + inp.module_parameters.module_id + " · " + REP.text.outcomeKind(rep.deterministic).title;
-    $("report-files").textContent = "Files: " + REP.fileName(rep, "html") + " · " + REP.fileName(rep, "json");
+    $("report-files").textContent = "Files: " + REP.fileName(rep, "pdf") + " · " + REP.fileName(rep, "json");
     renderAiBar();
     $("btn-report-back").textContent = from === "blocked" ? "Back" : "Back to outcome";
     $("report-print-note").hidden = true;
@@ -732,6 +732,24 @@ window.IGBT.ui = (function () {
       window.open(url, "_blank");
       $("report-print-note").hidden = false;
       $("report-print-note").textContent = "The report opened in a new tab. Use the browser's Print there and choose Save as PDF.";
+    }
+  }
+
+  function shareReport() {
+    if (!state.view) return;
+    var rep = state.view.report, button = $("btn-report-html");
+    button.disabled = true;
+    function message(text) { if (state.view && state.view.report === rep) $("report-files").textContent = text; }
+    try {
+      var pdf = window.IGBT.pdf.create(rep, { ai: aiFor(rep) });
+      var file = new File([pdf.blob], pdf.name, { type: "application/pdf" });
+      window.IGBT.pdf.shareFile(file).then(function (mode) {
+        message(mode === "share" ? "PDF opened for sharing." : mode === "cancelled" ? "Sharing cancelled." : "PDF downloaded. Attach it in your messaging or email app.");
+      }).catch(function () { message("Could not share the PDF. Use Save PDF instead."); })
+        .finally(function () { button.disabled = false; });
+    } catch (e) {
+      button.disabled = false;
+      message("Could not create the shared PDF. Use Save PDF instead.");
     }
   }
 
@@ -801,7 +819,7 @@ window.IGBT.ui = (function () {
       $("report-preview").addEventListener("load", function () {
         try { var d = this.contentDocument; this.style.height = Math.max(400, d.documentElement.scrollHeight + 4) + "px"; } catch (e) { /* keep CSS height */ }
       });
-      $("btn-report-html").addEventListener("click", function () { if (state.view) REP.downloadHtml(state.view.report, { ai: aiFor(state.view.report) }); });
+      $("btn-report-html").addEventListener("click", shareReport);
       if ($("btn-ai-generate")) $("btn-ai-generate").addEventListener("click", generateAi);
       $("btn-report-json").addEventListener("click", function () { if (state.view) REP.download(state.view.report); });
       $("btn-reset-sim").addEventListener("click", resetSimulation);

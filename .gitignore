@@ -14,6 +14,7 @@ dist/
 .obsidian/
 # Hosting output and local credentials
 /public/
+/tmp/
 node_modules/
 .vercel/
 .env

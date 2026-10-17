@@ -1,7 +1,8 @@
 # Deploy IGBT Test Cell
 
 Website source: approved `said/ui-premium` revision `de966f802f1fa499018bd6e732ac996232f58909`.
-The deployment adapter preserves that revision's app, report, engine and AI validation byte for byte.
+The deployment adapter uses that revision, with a later Share report action added to the operator screen.
+Engine rules, report JSON and AI validation are unchanged.
 
 ## Import
 
@@ -28,7 +29,9 @@ Same-origin checks and the per-instance concurrency lock are not visitor authent
 ## Verify after deployment
 
 Complete a test, generate one AI analysis, and save the PDF. Check the failure/value/limit or recorded bench issue
-matches the results. Download JSON and HTML; confirm the HTML includes the same generated analysis.
+matches the results. Download JSON. Share report creates a PDF locally, includes any generated AI analysis,
+and opens native file sharing when supported; otherwise it downloads the PDF for attaching manually.
+Cancelling native sharing does not trigger a download. The existing Save PDF print path is unchanged.
 No deployment-side paid request was made while preparing this adapter.
 
 ## Local and offline

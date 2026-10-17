@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>IGBT Test Cell — Self-check (SIMULATION)</title>
+<style>
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color:#1b1f24; background:#f6f7f9; }
+  #sim-banner { position:sticky; top:0; background:#ffd666; color:#7a4b00; font-weight:700; text-align:center; padding:8px; border-bottom:2px solid #7a4b00; }
+  main { max-width:1000px; margin:0 auto; padding:20px; }
+  table { border-collapse:collapse; width:100%; background:#fff; }
+  th, td { text-align:left; padding:5px 8px; border-bottom:1px solid #d5dae0; vertical-align:top; }
+  .PASS { color:#0b6b2e; font-weight:700; }
+  .FAIL { color:#a1121b; font-weight:700; }
+  #total { font-size:18px; font-weight:700; margin:12px 0; }
+  code { font-size:12px; }
+</style>
+</head>
+<body>
+<div id="sim-banner"></div>
+<main>
+  <h1>Self-check: validation, preflight, engine vs 03 §12, reports and seeded noise</h1>
+  <p>Runs in this browser with the same scripts as <code>index.html</code>. The same checks run in node with <code>node dev/selfcheck-node.js</code>.</p>
+  <div id="total"></div>
+  <table><thead><tr><th>#</th><th>Case</th><th>Result</th><th>Detail</th></tr></thead><tbody id="rows"></tbody></table>
+</main>
+
+<script src="js/data.js"></script>
+<script src="js/validate.js"></script>
+<script src="js/rng.js"></script>
+<script src="js/models.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/sequencer.js"></script>
+<script src="js/report.js"></script>
+<script src="js/ui.js"></script>
+<script id="checks">
+window.IGBT.selfcheck = (function () {
+  var V = window.IGBT.validate, D = window.APP_DATA;
+  function clone(o) { return JSON.parse(JSON.stringify(o)); }
+  function setup(extra) {
+    var s = { module_id: "DEMO-MODULE-01", profile_id: "demo", scenario_id: "S0", seed: 20261018, speed: 8, operator: "selfcheck" };
+    for (var k in (extra || {})) s[k] = extra[k];
+    return s;
+  }
+  function demo() { return clone(V.findProfile("demo")); }
+  function rule(p, q) { return p.rules.filter(function (r) { return r.quantity_id === q; })[0]; }
+  function fmt(errs) { return errs.map(function (e) { return e.field + " = " + JSON.stringify(e.value) + ": " + e.rule; }).join(" | "); }
+  // expect validation errors, at least one on `field`
+  function rejects(errs, field) {
+    var hit = errs.some(function (e) { return e.field === field; });
+    return { pass: hit, detail: errs.length ? fmt(errs) : "no error raised" };
+  }
+  function invalid(res, field) {
+    if (res.status !== "INVALID") return { pass: false, detail: "status " + res.status };
+    return rejects(res.errors, field);
+  }
+
+  var cases = [];
+  function add(name, fn) { cases.push({ name: name, fn: fn }); }
+
+  // Defaults valid
+  add("Module defaults valid", function () { var e = V.validateModule(clone(D.module_defaults)); return { pass: e.length === 0, detail: e.length ? fmt(e) : "0 errors" }; });
+  D.profiles.forEach(function (p) {
+    add("Profile " + p.profile_id + " valid (incl. bench conditions, " + p.rules.length + " rules)", function () {
+      var e = V.validateProfile(clone(p)); return { pass: e.length === 0, detail: e.length ? fmt(e) : "0 errors" };
+    });
+  });
+  add("Setup defaults valid", function () { var e = V.validateSetup(setup()); return { pass: e.length === 0, detail: e.length ? fmt(e) : "0 errors" }; });
+  add("Preflight S0 with defaults → OK", function () {
+    var r = V.configPreflight(setup()); return { pass: r.status === "OK", detail: "status " + r.status + (r.errors ? ": " + fmt(r.errors) : "") };
+  });
+  add("Derived: t_safe from defaults = 24.85 s (< discharge_timeout_s 120 s)", function () {
+    var t = V.tSafe(demo().bench_conditions); return { pass: t.toFixed(2) === "24.85", detail: "t_safe = " + t.toFixed(4) + " s" };
+  });
+
+  // AC-14 set
+  add("AC-14 r_ce_mohm = −1 rejected (Custom)", function () {
+    return invalid(V.configPreflight(setup({ scenario_id: "CUSTOM", custom_overrides: { module: { r_ce_mohm: -1 }, bench: {} } })), "module.r_ce_mohm");
+  });
+  add("AC-14 dclink_c_mf = 0 rejected", function () {
+    var b = demo().bench_conditions; b.dclink_c_mf = 0; return rejects(V.validateBench(b), "bench.dclink_c_mf");
+  });
+  add("AC-14 v_safe_v = v_dc_test_v rejected", function () {
+    var b = demo().bench_conditions; b.v_safe_v = b.v_dc_test_v; return rejects(V.validateBench(b), "bench.v_safe_v");
+  });
+  add("AC-14 v_safe_v > v_dc_test_v rejected", function () {
+    var b = demo().bench_conditions; b.v_safe_v = 700; return rejects(V.validateBench(b), "bench.v_safe_v");
+  });
+  add("AC-14 speed = 0 rejected", function () { return invalid(V.configPreflight(setup({ speed: 0 })), "setup.speed"); });
+  add("AC-14 window min ≥ max rejected (Q01 0.8–0.8)", function () {
+    var p = demo(); rule(p, "Q01").min = 0.8; return rejects(V.validateProfile(p), "profile.demo.rules.Q01.min");
+  });
+  add("AC-14 window min > max rejected (Q06 16–14)", function () {
+    var p = demo(); rule(p, "Q06").min = 16; rule(p, "Q06").max = 14; return rejects(V.validateProfile(p), "profile.demo.rules.Q06.min");
+  });
+  add("AC-14 info rule with a limit rejected (Q16 max 200)", function () {
+    var p = demo(); rule(p, "Q16").max = 200; return rejects(V.validateProfile(p), "profile.demo.rules.Q16.max");
+  });
+  add("AC-14 demo rule missing a limit rejected (Q09 max null)", function () {
+    var p = demo(); rule(p, "Q09").max = null; return rejects(V.validateProfile(p), "profile.demo.rules.Q09.max");
+  });
+  add("AC-14 unknown override key rejected (module.foo)", function () {
+    return rejects(V.validateOverrides({ module: { foo: 1 }, bench: {} }), "module.foo");
+  });
+  add("AC-14 unknown override key rejected via preflight (Custom)", function () {
+    return invalid(V.configPreflight(setup({ scenario_id: "CUSTOM", custom_overrides: { module: { foo: 1 }, bench: {} } })), "module.foo");
+  });
+
+  // Approval and profile status
+  add("approval_status APPROVED rejected (AC-09)", function () {
+    var p = demo(); rule(p, "Q08").approval_status = "APPROVED"; return rejects(V.validateProfile(p), "profile.demo.rules.Q08.approval_status");
+  });
+  add("profile_status production_approved rejected", function () {
+    var p = demo(); p.profile_status = "production_approved"; return rejects(V.validateProfile(p), "profile.demo.profile_status");
+  });
+
+  // S5 configuration block
+  add("S5 → CONFIG_BLOCKED, block_reason CONFIGURATION_PREFLIGHT", function () {
+    var r = V.configPreflight(setup({ scenario_id: "S5" }));
+    return { pass: r.status === "CONFIG_BLOCKED" && r.block_reason === "CONFIGURATION_PREFLIGHT", detail: "status " + r.status + ", block_reason " + r.block_reason };
+  });
+
+  // Every built (P0, P1) scenario's overrides valid, and preflight result as expected
+  D.scenarios.filter(function (s) { return D.built_priorities.indexOf(s.priority) >= 0; }).forEach(function (s) {
+    add(s.priority + " " + s.scenario_id + " overrides valid; preflight " + (s.force_profile ? "CONFIG_BLOCKED" : "OK"), function () {
+      var e = V.validateOverrides(s.overrides);
+      var r = V.configPreflight(setup({ scenario_id: s.scenario_id }));
+      var want = s.force_profile ? "CONFIG_BLOCKED" : "OK";
+      return { pass: e.length === 0 && r.status === want, detail: (e.length ? fmt(e) + "; " : "0 override errors; ") + "status " + r.status };
+    });
+  });
+
+  // ---- S0 engine checks (TICKET 02; expected values from 03 §12 S0 row, σ = 0) ----
+  var SEQ = window.IGBT.sequencer, REP = window.IGBT.report, RNG = window.IGBT.rng;
+  function runScenario(id, stepper) {
+    var pre = V.configPreflight(setup({ scenario_id: id }));
+    var r = SEQ.create(pre);
+    if (stepper) stepper(r); else SEQ.runToEnd(r);
+    return { run: r, report: REP.buildJson(r, { run_id: "RUN-SELFCHECK", operator: "selfcheck" }) };
+  }
+  var s0cache = null;
+  function s0() { if (!s0cache) s0cache = runScenario("S0"); return s0cache; }
+  function det() { return s0().report.deterministic; }
+  function reading(q) {
+    var hit = null;
+    det().stages.forEach(function (s) { s.readings.forEach(function (r) { if (r.quantity_id === q) hit = r; }); });
+    return hit;
+  }
+  function eq(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+  function ev(d, type) { return d.events.filter(function (e) { return e.type === type; }); }
+
+  var S0_VALUES = [["Q01", 0.35], ["Q02", true], ["Q03", 6.0], ["Q03b", 6.0], ["Q04", 11.0], ["Q05", true], ["Q06", 15.0], ["Q07", -15.0],
+                   ["Q08", 0.05], ["Q09", 2.40], ["Q11", 0.05], ["Q16", 100], ["Q12", 1800], ["Q13", 780], ["Q14", 6.5], ["Q18", -15.0]];
+  S0_VALUES.forEach(function (p) {
+    add("S0 " + p[0] + " = " + p[1] + " (" + (p[0] === "Q16" ? "INFO" : "PASS") + ")", function () {
+      var r = reading(p[0]);
+      var want = p[0] === "Q16" ? "INFO" : "PASS";
+      return { pass: !!r && r.value === p[1] && r.verdict === want, detail: r ? "value " + JSON.stringify(r.value) + ", " + r.verdict + ", margin " + r.margin : "missing" };
+    });
+  });
+  add("S0 stage statuses: all DONE PASS; T06 NOT_APPLICABLE; T08b NOT_MODELLED", function () {
+    var bad = [], got = det().stages.map(function (s) { return s.test_id + " " + s.status; });
+    det().stages.forEach(function (s) {
+      var want = s.test_id === "T06" ? "NOT_APPLICABLE" : s.test_id === "T08b" ? "NOT_MODELLED" : "DONE";
+      var fails = s.readings.filter(function (r) { return r.required && r.verdict !== "PASS"; });
+      if (s.status !== want || (want === "DONE" && fails.length)) bad.push(s.test_id);
+    });
+    return { pass: bad.length === 0 && det().stages.length === 12, detail: bad.length ? "wrong: " + bad.join(", ") : got.join(" · ") };
+  });
+  add("S0 judged readings carry basis + NOT_APPROVED; Q08 basis CASE_TRANSFERRED (AC-09)", function () {
+    var bad = [];
+    det().stages.forEach(function (s) { s.readings.forEach(function (r) {
+      var judged = r.verdict === "PASS" || r.verdict === "FAIL";
+      if (judged && (!r.rule_basis || r.approval_status !== "NOT_APPROVED" || r.reason.indexOf("NOT APPROVED") < 0)) bad.push(r.quantity_id);
+    }); });
+    var q8 = reading("Q08");
+    return { pass: !bad.length && q8.rule_basis === "CASE_TRANSFERRED" && q8.reference_id === "REF-07", detail: bad.length ? "missing on " + bad.join(", ") : "Q08: " + q8.reason };
+  });
+  add("S0 Q09 equation built from values", function () {
+    var r = reading("Q09"), want = "V_CE(sat) = 1.00 V + 0.007 Ω × 200 A = 2.40 V";
+    return { pass: r.model_equation === want, detail: r.model_equation };
+  });
+  // Voltages are stored at full precision; 03 §12 gives them to display precision (2 dp)
+  add("S0 safe-state block: v0 600 V, discharge 24.85 s, verified 40.94 V (2 dp), SAFE", function () {
+    var ss = det().safe_state;
+    var ok = ss && ss.trigger === "NORMAL_COMPLETION" && ss.v_bus_at_start_v === 600 && ss.discharge_required === true && ss.discharge_time_s === 24.85 &&
+      window.IGBT.engine.r2(ss.v_bus_at_verification_v) === 40.94 && ss.verification === "VERIFIED" && ss.door === "UNLOCKED" && ss.final_state === "SAFE" &&
+      ss.gate_measured_v === -15 && ss.gate_off_confirmed === true;
+    return { pass: !!ok, detail: JSON.stringify(ss) };
+  });
+  add("S0 overall PASS with the 05 §8 label; not an acceptance decision", function () {
+    var o = det().overall;
+    return { pass: o.verdict === "PASS" && o.verdict_label === D.verdict_labels.PASS && o.is_acceptance_decision === false && o.abort_reason === null && o.block_reason === null,
+             detail: o.verdict + " · " + o.verdict_label + " · " + o.precedence_reason };
+  });
+  add("S0 physical_total_s = 499.85", function () { return { pass: det().physical_total_s === 499.85, detail: String(det().physical_total_s) }; });
+  add("S0 animation total = 62.48 s at speed 8", function () {
+    var p = s0().report.presentation;
+    return { pass: p.animation_total_s === 62.48 && det().inputs.speed === 8, detail: p.animation_total_s + " s at speed " + det().inputs.speed };
+  });
+  add("S0 exactly one DISCHARGE_START; door unlocks only after DISCHARGE_VERIFIED", function () {
+    var d = det(), ds = ev(d, "DISCHARGE_START"), v = ev(d, "DISCHARGE_VERIFIED"), u = ev(d, "DOOR_UNLOCKED");
+    return { pass: ds.length === 1 && v.length === 1 && u.length === 1 && u[0].seq > v[0].seq,
+             detail: ds.length + " DISCHARGE_START; VERIFIED seq " + (v[0] && v[0].seq) + " at " + (v[0] && v[0].physical_time_s) + " s; DOOR_UNLOCKED seq " + (u[0] && u[0].seq) };
+  });
+  add("S0 no bus voltage before T07 (BUS_CHARGE_START at T07 start, 290 s)", function () {
+    var b = ev(det(), "BUS_CHARGE_START");
+    return { pass: b.length === 1 && b[0].stage === "T07" && b[0].physical_time_s === 290, detail: b.length ? b[0].stage + " at " + b[0].physical_time_s + " s" : "none" };
+  });
+  add("AC-02 two S0 runs give byte-identical deterministic sections", function () {
+    var a = JSON.stringify(runScenario("S0").report.deterministic), b = JSON.stringify(runScenario("S0").report.deterministic);
+    return { pass: a === b, detail: a === b ? "identical (" + a.length + " characters)" : "differ" };
+  });
+  add("S0 same result with UI-size steps (advance 0.8 s) as with runToEnd", function () {
+    var stepped = runScenario("S0", function (r) { SEQ.start(r); for (var i = 0; i < 5000 && !SEQ.isTerminal(r); i++) SEQ.advance(r, 0.8); });
+    return { pass: eq(stepped.report.deterministic, det()), detail: eq(stepped.report.deterministic, det()) ? "identical" : "differ" };
+  });
+  add("σ = 0: the PRNG is never consulted", function () { s0(); return { pass: RNG.prngCalls() === 0, detail: RNG.prngCalls() + " PRNG calls" }; });
+  add("Report JSON: simulation true, banner text, deterministic events without animation_time_s", function () {
+    var rep = s0().report;
+    var noAnim = rep.deterministic.events.every(function (e) { return !e.hasOwnProperty("animation_time_s"); });
+    var parsed = JSON.parse(REP.serialise(rep));
+    return { pass: parsed.simulation === true && parsed.simulation_banner === D.fixed_texts.banner && noAnim && parsed.limitations === D.fixed_texts.limitations,
+             detail: "simulation " + parsed.simulation + "; banner " + (parsed.simulation_banner === D.fixed_texts.banner ? "OK" : "wrong") + "; " + rep.case_references.length + " case references" };
+  });
+  add("AC-12 S0 abort during T08a: one DISCHARGE_START, extra aborts only add WARNING", function () {
+    var r = runScenario("S0", function (x) {
+      SEQ.start(x); SEQ.advance(x, 365);
+      SEQ.abort(x, "OPERATOR"); SEQ.abort(x, "OPERATOR"); SEQ.abort(x, "OPERATOR");
+      SEQ.setInterlock(x, "IL1", false);
+      SEQ.advance(x, 5); SEQ.abort(x, "OPERATOR");
+      SEQ.advance(x, Infinity);
+    });
+    var d = r.report.deterministic, st = {};
+    d.stages.forEach(function (s) { st[s.test_id] = s.status; });
+    var warn = ev(d, "WARNING").length, ds = ev(d, "DISCHARGE_START").length, ab = ev(d, "ABORT_TRIGGER").length;
+    var v = ev(d, "DISCHARGE_VERIFIED")[0], u = ev(d, "DOOR_UNLOCKED")[0];
+    var ok = ds === 1 && ab === 1 && warn === 4 && st.T08a === "INTERRUPTED" && st.T09 === "NOT_RUN" && st.T08b === "NOT_MODELLED" &&
+      d.overall.verdict === "ABORTED" && d.overall.abort_reason === "OPERATOR" && u && v && u.seq > v.seq && d.safe_state.final_state === "SAFE";
+    return { pass: !!ok, detail: ds + " DISCHARGE_START, " + ab + " ABORT_TRIGGER, " + warn + " WARNING; T08a " + st.T08a + "; overall " + d.overall.verdict + " (" + d.overall.abort_reason + "); physical " + d.physical_total_s + " s" };
+  });
+  add("CONFIG_BLOCKED JSON (S5): every stage NOT_RUN, safe_state null, 0 s, NOT EVALUATED", function () {
+    var j = REP.buildConfigBlockedJson(V.configPreflight(setup({ scenario_id: "S5" })), { run_id: "RUN-SELFCHECK", operator: "selfcheck" });
+    var d = j.deterministic;
+    var ok = d.stages.every(function (s) { return s.status === "NOT_RUN" && s.blocked_reason === D.fixed_texts.config_blocked_stage_reason; }) &&
+      d.safe_state === null && d.physical_total_s === 0 && d.overall.verdict === "NOT EVALUATED" && d.overall.block_reason === "CONFIGURATION_PREFLIGHT" &&
+      ev(d, "BUS_CHARGE_START").length === 0 && j.simulation === true;
+    return { pass: !!ok, detail: d.overall.verdict + " · " + d.overall.block_reason + " · " + d.events.length + " event(s)" };
+  });
+
+  // ---- 03 §12 expected outcomes (TICKET 03). Expected values live here only, never on the app's code path. ----
+  // Stage outcome: "PASS" / "FAIL" = DONE with every required reading PASS / a required FAIL;
+  // "DONE" = DONE whatever the readings (03 §12 says only "DONE"); otherwise the status itself.
+  function stages12(over) {
+    var o = { T00: "PASS", T01: "PASS", T02: "PASS", T03: "PASS", T06: "NOT_APPLICABLE", T04: "PASS", T05: "PASS",
+              T07: "PASS", T08a: "PASS", T08b: "NOT_MODELLED", T09: "PASS", T10: "PASS" };
+    for (var k in (over || {})) o[k] = over[k];
+    return o;
+  }
+  var SAFE_AS_S0 = { trigger: "NORMAL_COMPLETION", v0: 600, discharge: 24.85, verified_v: 40.94, verification: "VERIFIED", door: "UNLOCKED", final: "SAFE" };
+  var S12 = {
+    S0: { stages: stages12(), values: S0_VALUES.map(function (p) { return [p[0], p[1], p[0] === "Q16" ? "INFO" : "PASS"]; }),
+          safe: SAFE_AS_S0, verdict: "PASS", reason: null, label: "PASS", physical: 499.85 },
+    S1: { stages: stages12({ T01: "FAIL", T05: "BLOCKED", T07: "BLOCKED", T08a: "BLOCKED", T09: "BLOCKED", T10: "DONE" }),
+          values: [["Q01", 0.0, "FAIL"], ["Q02", false, "FAIL"], ["Q18", -15.0, "PASS"]],
+          safe: { trigger: "NORMAL_COMPLETION", v0: 0, discharge: "NOT_REQUIRED", verified_v: 0, verification: "VERIFIED", door: "UNLOCKED", final: "SAFE" },
+          verdict: "FAIL", reason: null, label: "FAIL", physical: 280 },
+    S2: { stages: stages12({ T05: "FAIL" }), values: [["Q09", 3.40, "FAIL", -0.20]],
+          safe: SAFE_AS_S0, verdict: "FAIL", reason: null, label: "FAIL", physical: 499.85 },
+    S3: { stages: stages12({ T09: "FAIL" }), values: [["Q14", 18.0, "FAIL"]],
+          safe: SAFE_AS_S0, verdict: "FAIL", reason: null, label: "FAIL", physical: 499.85 },
+    S4: { stages: stages12({ T08a: "INTERRUPTED", T09: "NOT_RUN", T10: "DONE" }), values: [["Q18", -15.0, "PASS"]], abort_at: 365.0,
+          safe: { trigger: "ABORT", v0: 600, discharge: 24.85, verified_v: 40.94, verification: "VERIFIED", door: "UNLOCKED", final: "SAFE" },
+          verdict: "ABORTED", reason: "IL1_OPEN", label: "ABORTED", physical: 409.85 },
+    S5: { stages: stages12({ T00: "NOT_RUN", T01: "NOT_RUN", T02: "NOT_RUN", T03: "NOT_RUN", T06: "NOT_RUN", T04: "NOT_RUN", T05: "NOT_RUN",
+                             T07: "NOT_RUN", T08a: "NOT_RUN", T08b: "NOT_RUN", T09: "NOT_RUN", T10: "NOT_RUN" }), values: [],
+          safe: null, verdict: "NOT EVALUATED", reason: "CONFIGURATION_PREFLIGHT", label: "NOT_EVALUATED", physical: 0 },
+    S8: { stages: stages12({ T10: "DONE" }), values: [["Q18", -15.0, "PASS"]], timeout_s: 120,
+          safe: { trigger: "NORMAL_COMPLETION", v0: 600, discharge: "NO_DECAY", verified_v: 600, verification: "DISCHARGE_FAILED", door: "LOCKED", final: "FAULT_LOCKED" },
+          verdict: "ABORTED", reason: "SAFE_STATE_NOT_VERIFIED", label: "ABORTED_SAFE_STATE", physical: 595 },
+    // S8b (P1, AC-17). 03 §12 gives no v0 or bus figure at SS8 for S8b; 600 V and 40.94 V follow from 03 §6 as in S0
+    // (the bus decays normally; the meter cannot confirm it).
+    S8b: { stages: stages12({ T10: "DONE" }), values: [],
+          safe: { trigger: "NORMAL_COMPLETION", v0: 600, discharge: 24.85, verified_v: 40.94, verification: "VERIFICATION_UNAVAILABLE", door: "LOCKED", final: "FAULT_LOCKED" },
+          verdict: "ABORTED", reason: "SAFE_STATE_NOT_VERIFIED", label: "ABORTED_SAFE_STATE", physical: 499.85 }
+  };
+  var S12_IDS = ["S0", "S1", "S2", "S3", "S4", "S5", "S8", "S8b"];
+
+  // One report per scenario: a run to the end, or the CONFIG_BLOCKED report
+  function reportFor(id) {
+    var pre = V.configPreflight(setup({ scenario_id: id }));
+    if (pre.status === "CONFIG_BLOCKED") return REP.buildConfigBlockedJson(pre, { run_id: "RUN-SELFCHECK", operator: "selfcheck" });
+    return REP.buildJson(SEQ.runToEnd(SEQ.create(pre)), { run_id: "RUN-SELFCHECK", operator: "selfcheck" });
+  }
+  var repCache = {};
+  function rep(id) { if (!repCache[id]) repCache[id] = reportFor(id); return repCache[id]; }
+  function readingIn(d, q) {
+    var hit = null;
+    d.stages.forEach(function (s) { s.readings.forEach(function (r) { if (r.quantity_id === q) hit = r; }); });
+    return hit;
+  }
+  function outcome(s) {
+    if (s.status !== "DONE") return s.status;
+    return s.readings.some(function (r) { return r.required && r.verdict === "FAIL"; }) ? "FAIL" : "PASS";
+  }
+  function T() { return REP.text; }
+
+  // AC-11 rows: scenario, column, expected, actual, match (also printed by dev/selfcheck-node.js)
+  function s12Rows(id) {
+    var x = S12[id], d = rep(id).deterministic, rows = [];
+    // Stage outcomes
+    var exp = [], act = [], ok = true;
+    d.stages.forEach(function (s) {
+      var want = x.stages[s.test_id], got = outcome(s);
+      var match = want === "DONE" ? s.status === "DONE" : want === got;
+      if (!match) ok = false;
+      exp.push(s.test_id + " " + want); act.push(s.test_id + " " + (want === "DONE" && match ? "DONE" : got));
+    });
+    rows.push({ column: "Stage outcomes", expected: exp.join(" · "), actual: act.join(" · "), pass: ok && d.stages.length === 12 });
+    // Key values (stored value and verdict; margin where 03 §12 gives one)
+    exp = []; act = []; ok = true;
+    x.values.forEach(function (v) {
+      var r = readingIn(d, v[0]);
+      var u = r && T().unitOf(r) ? " " + T().unitOf(r) : "";
+      exp.push(v[0] + " " + JSON.stringify(v[1]) + " " + v[2] + (v[3] !== undefined ? " margin " + v[3] : ""));
+      if (!r) { ok = false; act.push(v[0] + " missing"); return; }
+      act.push(v[0] + " " + T().valueText(r) + u + " " + r.verdict + (v[3] !== undefined ? " margin " + T().marginText(r) : ""));
+      if (r.value !== v[1] || r.verdict !== v[2] || (v[3] !== undefined && r.margin !== v[3])) ok = false;
+    });
+    if (x.abort_at !== undefined) {
+      var ab = ev(d, "ABORT_TRIGGER");
+      exp.push("abort at " + x.abort_at.toFixed(1) + " s");
+      act.push(ab.length === 1 ? "abort at " + ab[0].physical_time_s.toFixed(1) + " s (" + ab[0].stage + ")" : ab.length + " ABORT_TRIGGER");
+      if (ab.length !== 1 || ab[0].physical_time_s !== x.abort_at) ok = false;
+    }
+    rows.push({ column: "Key values", expected: exp.join(" · ") || "–", actual: act.join(" · ") || "–", pass: ok });
+    // Safe state
+    var ss = d.safe_state, w = x.safe;
+    if (!w) rows.push({ column: "Safe state", expected: "null", actual: JSON.stringify(ss), pass: ss === null });
+    else {
+      var dis = ss ? (ss.discharge_required ? (ss.discharge_time_s === null ? "NO_DECAY" : ss.discharge_time_s) : "NOT_REQUIRED") : null;
+      var r2 = window.IGBT.engine.r2;   // voltages to display precision (2 dp), as 03 §12 gives them
+      var gotS = ss ? [ss.trigger, "v0 " + r2(ss.v_bus_at_start_v) + " V", "discharge " + dis, "verified " + r2(ss.v_bus_at_verification_v) + " V", ss.verification, "door " + ss.door, ss.final_state].join(" · ") : "null";
+      var wantS = [w.trigger, "v0 " + w.v0 + " V", "discharge " + w.discharge, "verified " + w.verified_v + " V", w.verification, "door " + w.door, w.final].join(" · ");
+      var okS = gotS === wantS;
+      if (w.discharge === "NOT_REQUIRED") okS = okS && ev(d, "DISCHARGE_NOT_REQUIRED").length === 1 && ev(d, "DISCHARGE_START").length === 0;
+      if (x.timeout_s !== undefined) {
+        var ds = ev(d, "DISCHARGE_START")[0], df = ev(d, "DISCHARGE_FAILED")[0];
+        var span = ds && df ? window.IGBT.engine.r2(df.physical_time_s - ds.physical_time_s) : null;
+        wantS += " · DISCHARGE_FAILED after " + x.timeout_s + " s";
+        gotS += " · DISCHARGE_FAILED after " + span + " s";
+        okS = okS && span === x.timeout_s;
+      }
+      rows.push({ column: "Safe state", expected: wantS, actual: gotS, pass: okS });
+    }
+    // Overall
+    var o = d.overall, why = o.abort_reason || o.block_reason;
+    rows.push({ column: "Overall", expected: x.verdict + (x.reason ? " (" + x.reason + ")" : "") + " · 05 §8 label", actual: o.verdict + (why ? " (" + why + ")" : "") + " · " + o.verdict_label,
+                pass: o.verdict === x.verdict && why === x.reason && o.verdict_label === D.verdict_labels[x.label] && o.is_acceptance_decision === false });
+    rows.push({ column: "Physical", expected: x.physical + " s", actual: d.physical_total_s + " s", pass: d.physical_total_s === x.physical });
+    rows.forEach(function (r) { r.scenario = id; });
+    return rows;
+  }
+  function s12Table() {
+    var all = [];
+    S12_IDS.forEach(function (id) { all = all.concat(s12Rows(id)); });
+    return all;
+  }
+  S12_IDS.forEach(function (id) {
+    ["Stage outcomes", "Key values", "Safe state", "Overall", "Physical"].forEach(function (col, i) {
+      add("03 §12 " + id + " · " + col, function () {
+        var r = s12Rows(id)[i];
+        return { pass: r.pass, detail: "expected " + r.expected + " | actual " + r.actual };
+      });
+    });
+  });
+
+  // AC-02 for every §12 scenario: two runs, byte-identical deterministic sections
+  S12_IDS.forEach(function (id) {
+    add("AC-02 " + id + " two runs give byte-identical deterministic sections", function () {
+      var a = JSON.stringify(reportFor(id).deterministic), b = JSON.stringify(reportFor(id).deterministic);
+      return { pass: a === b, detail: a === b ? "identical (" + a.length + " characters)" : "differ" };
+    });
+  });
+  // AC-12 for every §12 scenario: at most one DISCHARGE_START; the door unlocks only after DISCHARGE_VERIFIED
+  S12_IDS.forEach(function (id) {
+    add("AC-12 " + id + " ≤ 1 DISCHARGE_START; DOOR_UNLOCKED only after DISCHARGE_VERIFIED", function () {
+      var d = rep(id).deterministic, ds = ev(d, "DISCHARGE_START").length, v = ev(d, "DISCHARGE_VERIFIED"), u = ev(d, "DOOR_UNLOCKED");
+      var ok = ds <= 1 && ev(d, "SAFE_STATE_START").length <= 1 && (u.length === 0 || (v.length === 1 && u.length === 1 && u[0].seq > v[0].seq));
+      return { pass: ok, detail: ds + " DISCHARGE_START; " + v.length + " DISCHARGE_VERIFIED; " + u.length + " DOOR_UNLOCKED" };
+    });
+  });
+
+  add("AC-04 S1: BLOCKED stages carry reasons; no bus charge or discharge events; not PASS", function () {
+    var d = rep("S1").deterministic;
+    var blocked = d.stages.filter(function (s) { return s.status === "BLOCKED"; });
+    var noReason = blocked.filter(function (s) { return !s.blocked_reason; });
+    var bus = ["BUS_CHARGE_START", "BUS_AT_SETPOINT", "DISCHARGE_START"].filter(function (t) { return ev(d, t).length; });
+    var ok = blocked.length === 4 && !noReason.length && ev(d, "PREREQUISITE_BLOCK").length === 4 && !bus.length && d.overall.verdict !== "PASS";
+    return { pass: ok, detail: blocked.map(function (s) { return s.test_id + ": " + s.blocked_reason; }).join(" · ") + "; bus events: " + (bus.join(", ") || "none") + "; overall " + d.overall.verdict };
+  });
+  add("AC-04 S4: full safe-state event sequence (SS1–SS9) after the abort, in order; not PASS", function () {
+    var d = rep("S4").deterministic;
+    var want = ["ABORT_TRIGGER", "SAFE_STATE_START", "GATE_OFF_COMMANDED", "GATE_OFF_CONFIRMED", "HV_SOURCE_DISABLED", "CONTACTOR_OPEN", "DISCHARGE_START", "DISCHARGE_VERIFIED", "DOOR_UNLOCKED"];
+    var got = d.events.filter(function (e) { return want.indexOf(e.type) >= 0; }).map(function (e) { return e.type; });
+    return { pass: eq(got, want) && d.overall.verdict !== "PASS" && d.safe_state.trigger === "ABORT", detail: got.join(" → ") + "; overall " + d.overall.verdict };
+  });
+  add("AC-05 S5: no stage executed, no bus events, NOT EVALUATED + block_reason; label differs from INCOMPLETE", function () {
+    var d = rep("S5").deterministic, o = d.overall;
+    var executed = ev(d, "STAGE_START").length + ev(d, "RUN_START").length;
+    var bus = ev(d, "BUS_CHARGE_START").length + ev(d, "DISCHARGE_START").length + ev(d, "SAFE_STATE_START").length;
+    var ok = !executed && !bus && o.verdict === "NOT EVALUATED" && o.block_reason === "CONFIGURATION_PREFLIGHT" && o.abort_reason === null &&
+      o.verdict_label === D.verdict_labels.NOT_EVALUATED && o.verdict_label !== D.verdict_labels.INCOMPLETE && d.safe_state === null;
+    return { pass: ok, detail: o.verdict + " · " + o.block_reason + " · " + o.verdict_label };
+  });
+  add("AC-13 S8: door LOCKED, FAULT_LOCKED (never SAFE / DOOR_UNLOCKED), overall ABORTED, report exportable", function () {
+    var r = rep("S8"), d = r.deterministic, ss = d.safe_state, html = REP.buildHtml(r);
+    var parsed = JSON.parse(REP.serialise(r));
+    var ok = ss.door === "LOCKED" && ss.final_state === "FAULT_LOCKED" && ev(d, "DOOR_UNLOCKED").length === 0 && ev(d, "FAULT_LOCKED").length === 1 &&
+      d.overall.verdict === "ABORTED" && d.overall.abort_reason === "SAFE_STATE_NOT_VERIFIED" && parsed.simulation === true &&
+      html.indexOf("<p class=\"lock\">" + D.fixed_texts.fault_locked_banner + "</p>") >= 0;
+    return { pass: ok, detail: "door " + ss.door + " · " + ss.final_state + " · " + d.overall.verdict + " (" + d.overall.abort_reason + ") · JSON and HTML build" };
+  });
+
+  // ---- HTML report checks (05 §10; AC-06, AC-07, AC-08) ----
+  function htmlEsc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+  function rowHtml(html, re) { var m = html.match(re); return m ? m[0] : null; }
+  S12_IDS.forEach(function (id) {
+    add("HTML " + id + ": banner, footer, limitations, chip legend; no script, no URL", function () {
+      var html = REP.buildHtml(rep(id)), miss = [];
+      [D.fixed_texts.banner, D.fixed_texts.report_footer, D.fixed_texts.limitations, D.fixed_texts.clock_caption].forEach(function (t) { if (html.indexOf(htmlEsc(t)) < 0) miss.push(t.slice(0, 24) + "…"); });
+      D.fixed_texts.chip_legend.forEach(function (c) { if (html.indexOf(htmlEsc(c.chip)) < 0 || html.indexOf(htmlEsc(c.meaning)) < 0) miss.push(c.chip); });
+      var bad = /<script/i.test(html) || /https?:/i.test(html) || /\bsrc=/i.test(html);
+      return { pass: !miss.length && !bad, detail: (miss.length ? "missing: " + miss.join(", ") : "all fixed texts present") + (bad ? "; script/URL found" : "; no script, no URL") + "; " + html.length + " characters" };
+    });
+    add("AC-06 " + id + ": every JSON stage and reading has an HTML row with the same ID, status, value, verdict and chips", function () {
+      var r = rep(id), html = REP.buildHtml(r), bad = [], n = 0;
+      r.deterministic.stages.forEach(function (s) {
+        if (html.indexOf("data-stage=\"" + s.test_id + "\" data-status=\"" + s.status + "\"") < 0) bad.push(s.test_id + " status");
+        s.readings.forEach(function (x) {
+          n++;
+          var tr = rowHtml(html, new RegExp("<tr class=\"rd(?: nr)?\" data-q=\"" + x.quantity_id + "\" data-verdict=\"" + x.verdict + "\">.*?</tr>"));
+          if (!tr) { bad.push(x.quantity_id + " row/verdict"); return; }
+          if (tr.indexOf("<td class=\"v num\">" + htmlEsc(T().valueText(x)) + "</td>") < 0) bad.push(x.quantity_id + " value");
+          T().chipTexts(x).forEach(function (c) { if (tr.indexOf(">" + htmlEsc(c) + "</span>") < 0) bad.push(x.quantity_id + " chip " + c); });
+          if (html.indexOf(htmlEsc(x.reason)) < 0) bad.push(x.quantity_id + " reason");
+        });
+      });
+      return { pass: !bad.length && n > 0, detail: bad.length ? "mismatch: " + bad.join(", ") : n + " readings and " + r.deterministic.stages.length + " stages agree" };
+    });
+    add("AC-08 " + id + ": every event row shows physical and animation time = physical / speed", function () {
+      var r = rep(id), html = REP.buildHtml(r), sp = r.deterministic.inputs.speed, F = window.IGBT.models.fmt, bad = [];
+      r.deterministic.events.forEach(function (e) {
+        var tr = rowHtml(html, new RegExp("<tr( class=\"[^\"]*\")? data-seq=\"" + e.seq + "\">.*?</tr>"));
+        var want = "<td class=\"num\">" + F.fixed(e.physical_time_s, 2) + "</td><td class=\"num\">" + F.fixed(e.physical_time_s / sp, 2) + "</td>";
+        if (!tr || tr.indexOf(want) < 0) bad.push(e.seq);
+      });
+      return { pass: !bad.length, detail: bad.length ? "wrong rows: " + bad.join(", ") : r.deterministic.events.length + " events at speed " + sp };
+    });
+  });
+
+  // ---- TICKET 03b regression checks (independent review) ----
+  function customRun(mod, bench, stepper) {
+    var pre = V.configPreflight(setup({ scenario_id: "CUSTOM", custom_overrides: { module: mod || {}, bench: bench || {} } }));
+    if (pre.status !== "OK") return { pre: pre };
+    var r = SEQ.create(pre);
+    if (stepper) stepper(r); else SEQ.runToEnd(r);
+    return { pre: pre, run: r, report: REP.buildJson(r, { run_id: "RUN-SELFCHECK", operator: "selfcheck" }), d: REP.buildJson(r, {}).deterministic };
+  }
+  function abortAt(t) { return function (r) { SEQ.start(r); SEQ.advance(r, t); SEQ.abort(r, "OPERATOR"); SEQ.advance(r, Infinity); }; }
+
+  // 1. Readings are judged at full precision; display rounds (and never hides a FAIL)
+  [["r_ce_mohm", 11.0002, "Q09", 3.20004, "FAIL", -0.00004, "3.20004", "−0.00004 V"],
+   ["diode_fwd_v", 0.19999, "Q01", 0.19999, "FAIL", -0.00001, "0.19999", "−0.00001 V"],
+   ["desat_trip_us", 10.00001, "Q14", 10.00001, "FAIL", -0.00001, "10.00001", "−0.00001 µs"],
+   ["r_ce_mohm", 11.0, "Q09", 3.2, "PASS", 0, "3.20", "0.00 V"],
+   ["diode_fwd_v", 0.2, "Q01", 0.2, "PASS", 0, "0.20", "0.00 V"],
+   ["diode_fwd_v", 0.8, "Q01", 0.8, "PASS", 0, "0.80", "0.00 V"],
+   ["desat_trip_us", 10, "Q14", 10, "PASS", 0, "10.0", "0.0 µs"]
+  ].forEach(function (c) {
+    add("03b full precision: " + c[0] + " = " + c[1] + " → " + c[2] + " " + c[3] + " " + c[4] + " (shown " + c[6] + ")", function () {
+      var mod = {}; mod[c[0]] = c[1];
+      var x = customRun(mod);
+      if (!x.d) return { pass: false, detail: "preflight " + x.pre.status };
+      var r = readingIn(x.d, c[2]);
+      var ok = r.value === c[3] && r.verdict === c[4] && r.margin === c[5] && T().valueText(r) === c[6] && T().marginText(r) === c[7] &&
+        (c[4] === "PASS" || (x.d.overall.verdict === "FAIL" && r.reason.indexOf(c[6] + " ") >= 0));
+      return { pass: ok, detail: "value " + r.value + " · " + r.verdict + " · margin " + r.margin + " · shown " + T().valueText(r) + " / " + T().marginText(r) + " · overall " + x.d.overall.verdict + " · " + r.reason };
+    });
+  });
+  add("03b full precision: 'discharge required' judged on the unrounded bus voltage (50.004 V > v_safe 50.003 V)", function () {
+    // charge 0.100008 A into 1 mF = 100.008 V/s; abort 0.5 s after T07 starts (290 s) → v0 = 50.004 V
+    var x = customRun({}, { charge_current_a: 0.100008, v_safe_v: 50.003 }, abortAt(290.5));
+    if (!x.d) return { pass: false, detail: "preflight " + x.pre.status + " " + JSON.stringify(x.pre.errors) };
+    var ss = x.d.safe_state;
+    return { pass: ss.v_bus_at_start_v === 50.004 && ss.discharge_required === true && ev(x.d, "DISCHARGE_START").length === 1 && ss.verification === "VERIFIED",
+             detail: "v0 " + ss.v_bus_at_start_v + " V · required " + ss.discharge_required + " · " + ss.verification };
+  });
+  add("03b full precision: verification exactly at t_safe (verify_delay_s = 0) reads v_safe and is VERIFIED", function () {
+    var x = customRun({}, { verify_delay_s: 0 }), ss = x.d.safe_state;
+    return { pass: ss.v_bus_at_verification_v === 50 && ss.verification === "VERIFIED", detail: "v at verification " + ss.v_bus_at_verification_v + " V · " + ss.verification };
+  });
+
+  // 2. A profile must carry exactly one rule for each modelled quantity
+  function withoutRule(p, q) { p.rules = p.rules.filter(function (r) { return r.quantity_id !== q; }); return p; }
+  add("03b rule set: demo profile without Q09 rejected", function () { return rejects(V.validateProfile(withoutRule(demo(), "Q09")), "profile.demo.rules.Q09"); });
+  add("03b rule set: demo profile with rules [] rejected (one error per modelled quantity)", function () {
+    var p = demo(); p.rules = [];
+    var e = V.validateProfile(p);
+    return { pass: e.length === D.modelled_quantities.length && D.modelled_quantities.every(function (m) { return e.some(function (x) { return x.field === "profile.demo.rules." + m.quantity_id; }); }),
+             detail: e.length + " errors for " + D.modelled_quantities.length + " modelled quantities" };
+  });
+  add("03b rule set: Q09 moved to T07 rejected", function () { var p = demo(); rule(p, "Q09").test_id = "T07"; return rejects(V.validateProfile(p), "profile.demo.rules.Q09.test_id"); });
+  add("03b rule set: Q09 turned into an info rule rejected", function () {
+    var p = demo(), q = rule(p, "Q09"); q.rule_type = "info"; q.max = null; q.required = false; q.rule_basis = null; q.reference_id = null;
+    var e = V.validateProfile(p);
+    return { pass: e.some(function (x) { return x.field === "profile.demo.rules.Q09.rule_type"; }) && e.some(function (x) { return x.field === "profile.demo.rules.Q09.required"; }), detail: fmt(e) };
+  });
+  add("03b rule set: Q09 required = false rejected", function () { var p = demo(); rule(p, "Q09").required = false; return rejects(V.validateProfile(p), "profile.demo.rules.Q09.required"); });
+  add("03b rule set: Q09 unit changed rejected", function () { var p = demo(); rule(p, "Q09").unit = "mV"; return rejects(V.validateProfile(p), "profile.demo.rules.Q09.unit"); });
+  add("03b rule set: rule for an unmodelled quantity (Q99) rejected", function () {
+    var p = demo(), q = clone(rule(p, "Q09")); q.quantity_id = "Q99"; p.rules.push(q);
+    return rejects(V.validateProfile(p), "profile.demo.rules.Q99");
+  });
+  add("03b rule set: preflight with Q09 removed from the data, or rules [], gives INVALID (no run, no verdict)", function () {
+    var prof = V.findProfile("demo"), saved = prof.rules, a, b;
+    try {
+      prof.rules = saved.filter(function (r) { return r.quantity_id !== "Q09"; });
+      a = V.configPreflight(setup({ scenario_id: "S2" }));
+      prof.rules = [];
+      b = V.configPreflight(setup({ scenario_id: "S0" }));
+    } finally { prof.rules = saved; }
+    var after = V.configPreflight(setup({ scenario_id: "S0" }));
+    return { pass: a.status === "INVALID" && b.status === "INVALID" && after.status === "OK", detail: "without Q09: " + a.status + " · rules []: " + b.status + " · restored: " + after.status };
+  });
+  add("03b rule set: the engine computes exactly the data.js modelled quantities, stage by stage", function () {
+    var inputs = V.configPreflight(setup()).inputs, bad = [];
+    D.stages.forEach(function (st) {
+      var got = Object.keys(window.IGBT.engine.measure(st.test_id, inputs)).sort();
+      var want = D.modelled_quantities.filter(function (m) { return m.test_id === st.test_id; }).map(function (m) { return m.quantity_id; }).sort();
+      if (!eq(got, want)) bad.push(st.test_id + ": engine " + got.join(",") + " vs data " + want.join(","));
+    });
+    return { pass: !bad.length, detail: bad.length ? bad.join(" · ") : D.modelled_quantities.length + " quantities on " + D.stages.length + " stages agree" };
+  });
+
+  // 3. Timing: components, final event time and reported duration agree
+  function timing(d) {
+    var r2 = window.IGBT.engine.r2, last = d.events[d.events.length - 1], sum = 0, bad = [];
+    d.stages.forEach(function (s) {
+      sum += s.physical_estimate_s;
+      var c = r2(s.physical_components.reduce(function (a, x) { return a + x.seconds; }, 0));
+      if (c !== s.physical_estimate_s) bad.push(s.test_id + " components " + c + " ≠ " + s.physical_estimate_s);
+      var st = d.events.filter(function (e) { return e.stage === s.test_id && e.type === "STAGE_START"; })[0];
+      var en = d.events.filter(function (e) { return e.stage === s.test_id && e.type === "STAGE_END"; })[0];
+      if (st && en && r2(en.physical_time_s - st.physical_time_s) !== s.physical_estimate_s) bad.push(s.test_id + " events " + r2(en.physical_time_s - st.physical_time_s) + " ≠ " + s.physical_estimate_s);
+    });
+    sum = r2(sum);
+    if (last.type !== "RUN_END" || last.physical_time_s !== d.physical_total_s) bad.push("RUN_END " + last.physical_time_s + " ≠ total " + d.physical_total_s);
+    if (sum !== d.physical_total_s) bad.push("sum " + sum + " ≠ total " + d.physical_total_s);
+    return { ok: !bad.length, text: "RUN_END " + last.physical_time_s + " s · total " + d.physical_total_s + " s · sum " + sum + " s" + (bad.length ? " · " + bad.join("; ") : "") };
+  }
+  add("03b timing: verify_delay_s = 30 → T10 gets a 10 s COMPUTED wait; RUN_END = total = 509.85 s", function () {
+    var x = customRun({}, { verify_delay_s: 30 }), t = timing(x.d), t10 = x.d.stages.filter(function (s) { return s.test_id === "T10"; })[0];
+    var extra = t10.physical_components.filter(function (c) { return c.basis === "COMPUTED" && /verification wait/.test(c.note); });
+    return { pass: t.ok && x.d.physical_total_s === 509.85 && extra.length === 1 && extra[0].seconds === 10, detail: t.text + " · T10: " + t10.physical_components.map(function (c) { return c.basis + " " + c.seconds; }).join(" + ") };
+  });
+  [0, 2, 19.99, 20, 20.01, 30, 100].forEach(function (vd) {
+    [["S0 bench", {}], ["no discharge (S1 module)", { diode_fwd_v: 0.0, diode_reverse_open: false }]].forEach(function (k) {
+      add("03b timing: " + k[0] + ", verify_delay_s = " + vd + " → components, RUN_END and total agree", function () {
+        var x = customRun(k[1], { verify_delay_s: vd }), t = timing(x.d);
+        return { pass: t.ok, detail: t.text };
+      });
+    });
+  });
+  add("03b timing: failed discharge with verify_delay_s = 30 still verifies at the timeout; total 595 s", function () {
+    var x = customRun({}, { verify_delay_s: 30, discharge_path_ok: false }), t = timing(x.d);
+    return { pass: t.ok && x.d.physical_total_s === 595, detail: t.text };
+  });
+  [10, 150.5, 290.5, 300, 365, 410.37, 454.99].forEach(function (at) {
+    add("03b timing: abort at " + at + " s (verify_delay_s 30) → components, RUN_END and total agree", function () {
+      var x = customRun({}, { verify_delay_s: 30 }, abortAt(at)), t = timing(x.d);
+      return { pass: t.ok && x.d.overall.verdict === "ABORTED", detail: t.text + " · " + x.d.overall.verdict };
+    });
+  });
+
+  // ---- TICKET 04: Custom flip (AC-03), AC-14 end to end, AC-15 ----
+  function stageOf(d, id) { return d.stages.filter(function (s) { return s.test_id === id; })[0]; }
+  function others(d, skipStage) { return d.stages.filter(function (s) { return s.test_id !== skipStage; }); }
+  var c7 = null, c12 = null;
+  function custom7() { if (!c7) c7 = customRun({ r_ce_mohm: 7 }); return c7; }
+  function custom12() { if (!c12) c12 = customRun({ r_ce_mohm: 12 }); return c12; }
+
+  add("AC-03 Custom r_ce_mohm = 7 → T05 DONE PASS: Q09 2.40 V ≤ max 3.20 V; overall PASS", function () {
+    var d = custom7().d, st = stageOf(d, "T05"), q = readingIn(d, "Q09");
+    var ok = d.inputs.scenario_id === "CUSTOM" && d.inputs.module_parameters.r_ce_mohm === 7 && st.status === "DONE" && outcome(st) === "PASS" &&
+      q.value === 2.4 && q.verdict === "PASS" && q.margin === 0.8 &&
+      q.reason === "V_CE(sat) at pulse current 2.40 V ≤ max 3.20 V [ILLUSTRATIVE · INVENTED, NOT APPROVED]" &&
+      q.model_equation === "V_CE(sat) = 1.00 V + 0.007 Ω × 200 A = 2.40 V" && d.overall.verdict === "PASS";
+    return { pass: ok, detail: "T05 " + outcome(st) + " · " + q.reason + " · " + q.model_equation + " · overall " + d.overall.verdict };
+  });
+  add("AC-03 Custom r_ce_mohm = 12 → T05 FAIL: Q09 3.40 V > max 3.20 V, margin −0.20 V; reason, equation and hypothesis updated", function () {
+    var d = custom12().d, st = stageOf(d, "T05"), q = readingIn(d, "Q09");
+    var hyp = d.hypotheses.filter(function (h) { return h.source === "T05"; })[0];
+    var ok = d.inputs.module_parameters.r_ce_mohm === 12 && st.status === "DONE" && outcome(st) === "FAIL" &&
+      q.value === 3.4 && q.verdict === "FAIL" && q.margin === -0.2 &&
+      q.reason === "V_CE(sat) at pulse current 3.40 V > max 3.20 V [ILLUSTRATIVE · INVENTED, NOT APPROVED]" &&
+      q.model_equation === "V_CE(sat) = 1.00 V + 0.012 Ω × 200 A = 3.40 V" &&
+      !!hyp && hyp.text.indexOf("consistent with increased conduction resistance") >= 0 && T().marginText(q) === "−0.20 V";
+    return { pass: ok, detail: "T05 " + outcome(st) + " · " + q.reason + " · margin " + T().marginText(q) + " · " + q.model_equation + " · " + (hyp ? hyp.text : "no hypothesis") };
+  });
+  add("AC-03 Custom r_ce_mohm = 12 → overall FAIL with the 05 §8 label; every other stage unchanged", function () {
+    var a = custom7().d, b = custom12().d, o = b.overall;
+    var same = JSON.stringify(others(a, "T05")) === JSON.stringify(others(b, "T05")) &&
+      JSON.stringify(a.safe_state) === JSON.stringify(b.safe_state) && a.physical_total_s === b.physical_total_s;
+    var ok = o.verdict === "FAIL" && o.verdict_label === D.verdict_labels.FAIL && o.is_acceptance_decision === false && same;
+    return { pass: ok, detail: o.verdict + " · " + o.verdict_label + " · other stages, safe state and total " + (same ? "identical" : "DIFFER") };
+  });
+  add("AC-03 Custom r_ce_mohm = 12 and S2 give the same stages, overall, safe state, events and total (only the scenario ID differs)", function () {
+    var a = custom12().d, b = rep("S2").deterministic;
+    function core(d) { return JSON.stringify([d.stages, d.overall, d.safe_state, d.events, d.hypotheses, d.physical_total_s, d.inputs.module_parameters, d.inputs.bench_conditions]); }
+    var ok = core(a) === core(b) && a.inputs.scenario_id === "CUSTOM" && b.inputs.scenario_id === "S2";
+    return { pass: ok, detail: (core(a) === core(b) ? "identical" : "DIFFER") + " · scenario_id " + a.inputs.scenario_id + " vs " + b.inputs.scenario_id };
+  });
+  add("AC-03 Custom r_ce_mohm = 12: Result and HTML report list the changed input (module.r_ce_mohm = 12)", function () {
+    var x = custom12(), t = T().overridesText(x.d.inputs), html = REP.buildHtml(x.report);
+    var ok = t === "module.r_ce_mohm = 12" && html.indexOf(htmlEsc(t)) >= 0 && T().overridesText(custom7().d.inputs) === "none (defaults)";
+    return { pass: ok, detail: "12 → \"" + t + "\" (in HTML: " + (html.indexOf(htmlEsc(t)) >= 0) + ") · 7 → \"" + T().overridesText(custom7().d.inputs) + "\"" };
+  });
+  add("AC-02 Custom r_ce_mohm = 12 two runs give byte-identical deterministic sections", function () {
+    var a = JSON.stringify(customRun({ r_ce_mohm: 12 }).d), b = JSON.stringify(customRun({ r_ce_mohm: 12 }).d);
+    return { pass: a === b, detail: a === b ? "identical (" + a.length + " characters)" : "differ" };
+  });
+
+  // AC-14: every case through configPreflight → INVALID with field, value and rule; no run, no verdict.
+  // Module and override-key cases go through the Custom table's path; bench cases as Custom bench
+  // overrides (05 §2.2: same validation); rule cases as a temporary edit of the in-memory data file.
+  function customSetup(mod, bench) { return { scenario_id: "CUSTOM", custom_overrides: { module: mod || {}, bench: bench || {} } }; }
+  var AC14 = [
+    ["r_ce_mohm = −1 (Custom table)", customSetup({ r_ce_mohm: -1 }), null, "module.r_ce_mohm"],
+    ["dclink_c_mf = 0 (bench override)", customSetup({}, { dclink_c_mf: 0 }), null, "bench.dclink_c_mf"],
+    ["v_safe_v = v_dc_test_v = 600 V (bench override)", customSetup({}, { v_safe_v: 600 }), null, "bench.v_safe_v"],
+    ["v_safe_v = 700 V > v_dc_test_v (bench override)", customSetup({}, { v_safe_v: 700 }), null, "bench.v_safe_v"],
+    ["speed = 0 (setup)", { speed: 0 }, null, "setup.speed"],
+    ["window min ≥ max: Q01 0.8–0.8 (data file)", {}, function (p) { rule(p, "Q01").min = 0.8; }, "profile.demo.rules.Q01.min"],
+    ["window min > max: Q06 16–14 (data file)", {}, function (p) { rule(p, "Q06").min = 16; rule(p, "Q06").max = 14; }, "profile.demo.rules.Q06.min"],
+    ["info rule with a limit: Q16 max 200 (data file)", {}, function (p) { rule(p, "Q16").max = 200; }, "profile.demo.rules.Q16.max"],
+    ["demo rule missing a limit: Q09 max null (data file)", {}, function (p) { rule(p, "Q09").max = null; }, "profile.demo.rules.Q09.max"],
+    ["unknown override key: module.foo (Custom)", customSetup({ foo: 1 }), null, "module.foo"]
+  ];
+  function ac14Run(c) {
+    var prof = V.findProfile("demo"), saved = prof.rules, res;
+    try {
+      if (c[2]) { prof.rules = clone(saved); c[2](prof); }
+      res = V.configPreflight(setup(c[1]));
+    } finally { prof.rules = saved; }
+    var hits = res.status === "INVALID" ? res.errors.filter(function (e) { return e.field === c[3]; }) : [];
+    return { res: res, hits: hits };
+  }
+  AC14.forEach(function (c) {
+    add("AC-14 end to end: " + c[0] + " → INVALID (no run, no verdict) with field, value and rule", function () {
+      var x = ac14Run(c), ok = x.res.status === "INVALID" && x.hits.length > 0 && !x.res.inputs && !x.res.rules;
+      return { pass: ok, detail: "status " + x.res.status + (x.hits.length ? " · " + fmt(x.hits) : x.res.errors ? " · other errors: " + fmt(x.res.errors) : "") };
+    });
+  });
+  add("AC-14 the data file is restored after the temporary edits (S0 preflight OK)", function () {
+    var r = V.configPreflight(setup());
+    return { pass: r.status === "OK", detail: "status " + r.status };
+  });
+  function ac14Table() {
+    return AC14.map(function (c) {
+      var x = ac14Run(c), e = x.hits[0];
+      return { name: c[0], status: x.res.status, field: e ? e.field : "(none)", value: e ? JSON.stringify(e.value) : "", rule: e ? e.rule : "(not rejected)" };
+    });
+  }
+
+  // AC-15: change i_pulse_a and v_dc_test_v in the (in-memory) data file; conditions text,
+  // equations and computed values follow. Expected numbers are hand-computed from 02 §8.
+  var ac15 = null;
+  function ac15Run() {
+    if (ac15) return ac15;
+    var b = V.findProfile("demo").bench_conditions, saved = clone(b);
+    try {
+      b.i_pulse_a = 300; b.v_dc_test_v = 700;
+      var r = reportFor("S0");
+      ac15 = { report: r, d: r.deterministic, html: REP.buildHtml(r) };
+    } finally { Object.keys(saved).forEach(function (k) { b[k] = saved[k]; }); }
+    return ac15;
+  }
+  function rd(d, q) { return readingIn(d, q); }
+  add("AC-15 i_pulse_a 300 A, v_dc_test_v 700 V: conditions text follows (T05, T07, T08a)", function () {
+    var d = ac15Run().d, t5 = stageOf(d, "T05").conditions, t7 = stageOf(d, "T07").conditions, t8 = stageOf(d, "T08a").conditions;
+    var ok = t5.indexOf("I = 300 A pulse") >= 0 && t7.indexOf("V_CE = 700 V") >= 0 && t8.indexOf("V_bus = 700 V, I = 300 A") >= 0;
+    return { pass: ok, detail: t5 + " | " + t7 + " | " + t8 };
+  });
+  add("AC-15 Q09 = 1.00 V + 0.007 Ω × 300 A = 3.10 V (PASS)", function () {
+    var q = rd(ac15Run().d, "Q09");
+    return { pass: q.value === 3.1 && q.verdict === "PASS" && q.model_equation === "V_CE(sat) = 1.00 V + 0.007 Ω × 300 A = 3.10 V", detail: q.value + " " + q.verdict + " · " + q.model_equation };
+  });
+  add("AC-15 Q16 t1 = 300 µH × 300 A / 700 V = 128.57 µs; Q13 = 700 V + 100 nH × 1800 A/µs = 880 V", function () {
+    var a = rd(ac15Run().d, "Q16"), b = rd(ac15Run().d, "Q13");
+    var ok = Math.abs(a.value - 90000 / 700) < 1e-9 && a.model_equation.indexOf("300 µH × 300 A / 700 V") >= 0 &&
+      b.value === 880 && b.model_equation === "V_peak = 700 V + 100 nH × 1800 A/µs = 880 V" && b.verdict === "PASS";
+    return { pass: ok, detail: a.value + " · " + a.model_equation + " | " + b.value + " " + b.verdict + " · " + b.model_equation };
+  });
+  add("AC-15 T07 t_charge = 1 mF × 700 V / 0.1 A = 7.00 s (COMPUTED 7 + DWELL 23); bus charges to 700.0 V", function () {
+    var d = ac15Run().d, st = stageOf(d, "T07"), ch = ev(d, "BUS_CHARGE_START")[0];
+    var comps = st.physical_components.map(function (c) { return c.basis + " " + c.seconds; }).join(" + ");
+    var ok = st.model_equation === "t_charge = C·V/I = 1 mF × 700 V / 0.1 A = 7.00 s" && comps === "COMPUTED 7 + DWELL 23" && ch.detail.indexOf("charging to 700.0 V") >= 0;
+    return { pass: ok, detail: st.model_equation + " · " + comps + " · " + ch.detail };
+  });
+  add("AC-15 safe state: v0 700 V, t_safe = 10 kΩ × 1 mF × ln(700/50) = 26.39 s, E = 245 J; total 501.39 s", function () {
+    var d = ac15Run().d, ss = d.safe_state, eqT10 = stageOf(d, "T10").model_equation;
+    var ok = ss.v_bus_at_start_v === 700 && ss.discharge_time_s === 26.39 && ss.final_state === "SAFE" &&
+      eqT10.indexOf("ln(700.0 V / 50 V) = 26.39 s") >= 0 && eqT10.indexOf("= 245 J") >= 0 && d.physical_total_s === 501.39;
+    return { pass: ok, detail: "v0 " + ss.v_bus_at_start_v + " · discharge " + ss.discharge_time_s + " s · " + eqT10 + " · total " + d.physical_total_s };
+  });
+  var OLD_I = /(^|[^\d.])200 A(?![\w\/])/, OLD_V = /(^|[^\d.])600(\.0+)? V(?!\w)/;
+  add("AC-15 no '200 A' or '600 V' left in the JSON or HTML report (S0 at defaults has both)", function () {
+    var x = ac15Run(), j = JSON.stringify(x.report), base = JSON.stringify(rep("S0"));
+    var left = [OLD_I.test(j), OLD_V.test(j), OLD_I.test(x.html), OLD_V.test(x.html)];
+    var ok = left.every(function (b) { return !b; }) && OLD_I.test(base) && OLD_V.test(base);
+    return { pass: ok, detail: "JSON 200 A / 600 V: " + left[0] + " / " + left[1] + " · HTML: " + left[2] + " / " + left[3] + " · defaults S0 has both: " + (OLD_I.test(base) && OLD_V.test(base)) };
+  });
+  add("AC-15 the data file is restored afterwards (S0 deterministic section unchanged)", function () {
+    ac15Run();
+    var a = JSON.stringify(reportFor("S0").deterministic), b = JSON.stringify(det());
+    return { pass: a === b && V.findProfile("demo").bench_conditions.v_dc_test_v === 600, detail: a === b ? "identical" : "differ" };
+  });
+
+  // ---- TICKET 05: seeded noise (03 §11 N1–N3, AC-16) and S8b (AC-17) ----
+  var E5 = window.IGBT.engine, SIGMA = D.noise_on_sigma, NSEEDS = 1000;
+  function noisySetup(extra) { var s = setup(extra); s.noise = true; return s; }
+  function noisyDet(extra) {
+    var pre = V.configPreflight(noisySetup(extra));
+    if (pre.status !== "OK") return null;
+    return REP.buildJson(SEQ.runToEnd(SEQ.create(pre)), {}).deterministic;
+  }
+  // T05 reading through the engine for Custom r_ce_mohm (seeded noise on); no full run needed
+  function q09At(rce, seed) {
+    var pre = V.configPreflight(noisySetup({ scenario_id: "CUSTOM", seed: seed, custom_overrides: { module: { r_ce_mohm: rce }, bench: {} } }));
+    return E5.measureStage("T05", pre.inputs, pre.rules)[0];
+  }
+  var q09Rule = rule(demo(), "Q09"), I_PULSE = demo().bench_conditions.i_pulse_a, VCE0 = D.module_defaults.vce0_v;
+  // r_ce_mohm at which the noisy Q09 sits exactly on the limit, for factor f
+  function crossing(f) { return (q09Rule.max / f - VCE0) / (I_PULSE / 1000); }
+  var N3_LO = crossing(1 + 3 * SIGMA), N3_HI = crossing(1 - 3 * SIGMA);   // ≈10.534 and ≈11.495 mΩ (03 §11)
+
+  var n1c = null, n2c = null, n3c = null;
+  function N1() {
+    if (n1c) return n1c;
+    var fails = [], sig = [];
+    for (var s = 1; s <= NSEEDS; s++) {
+      var d = noisyDet({ seed: s });
+      if (!d || d.overall.verdict !== "PASS") fails.push(s);
+      if (d && d.inputs.noise_rel_sigma !== SIGMA && sig.length < 3) sig.push(s);
+    }
+    return (n1c = { pass: fails.length === 0 && sig.length === 0, n: NSEEDS - fails.length, fails: fails, sig: sig });
+  }
+  function N2() {
+    if (n2c) return n2c;
+    var bad = [], low = Infinity, high = -Infinity;
+    for (var s = 1; s <= NSEEDS; s++) {
+      var d = noisyDet({ scenario_id: "S2", seed: s }), r = d && readingIn(d, "Q09");
+      if (!r || r.verdict !== "FAIL" || d.inputs.noise_rel_sigma !== SIGMA) { bad.push(s); continue; }
+      low = Math.min(low, r.value); high = Math.max(high, r.value);
+    }
+    var bound = 3.40 * (1 - 3 * SIGMA);   // 3.298 V (03 §11)
+    return (n2c = { pass: bad.length === 0 && low >= bound - 1e-9, n: NSEEDS - bad.length, bad: bad, low: low, high: high, bound: bound });
+  }
+  var N3_ALL_PASS = [10.00, 10.25, 10.50, 10.53], N3_ALL_FAIL = [11.50, 11.75, 12.00];
+  function N3() {
+    if (n3c) return n3c;
+    var out = { sweep: [], outside: [], lo: Infinity, hi: -Infinity, mid: { pass: 0, fail: 0 } };
+    N3_ALL_PASS.concat(N3_ALL_FAIL).forEach(function (rce) {
+      var want = N3_ALL_PASS.indexOf(rce) >= 0 ? "PASS" : "FAIL", n = 0;
+      for (var s = 1; s <= NSEEDS; s++) if (q09At(rce, s).verdict === want) n++;
+      out.sweep.push({ rce: rce, want: want, n: n });
+    });
+    for (var s = 1; s <= NSEEDS; s++) {
+      // the seed's crossing, confirmed by the engine on both sides (±0.001 mΩ)
+      var c = crossing(RNG.factor(SIGMA, s, "Q09"));
+      var below = q09At(Number((c - 0.001).toFixed(4)), s).verdict, above = q09At(Number((c + 0.001).toFixed(4)), s).verdict;
+      if (below !== "PASS" || above !== "FAIL" || c < N3_LO || c > N3_HI) out.outside.push(s);
+      out.lo = Math.min(out.lo, c); out.hi = Math.max(out.hi, c);
+      out.mid[q09At(11.00, s).verdict === "PASS" ? "pass" : "fail"]++;
+    }
+    out.pass = out.outside.length === 0 && out.sweep.every(function (x) { return x.n === NSEEDS; }) && out.mid.pass > 0 && out.mid.fail > 0 &&
+      N3_LO.toFixed(3) === "10.534" && N3_HI.toFixed(3) === "11.495";
+    return (n3c = out);
+  }
+  function n3Text(x) {
+    return "bounds " + N3_LO.toFixed(3) + "–" + N3_HI.toFixed(3) + " mΩ; seed crossings " + x.lo.toFixed(3) + "–" + x.hi.toFixed(3) + " mΩ (" +
+      (NSEEDS - x.outside.length) + "/" + NSEEDS + " inside, engine-confirmed); " +
+      x.sweep.map(function (s) { return s.rce.toFixed(2) + " mΩ " + s.want + " " + s.n + "/" + NSEEDS; }).join(", ") +
+      "; 11.00 mΩ: " + x.mid.pass + " PASS / " + x.mid.fail + " FAIL";
+  }
+  add("AC-16 N1: σ = " + SIGMA + ", S0 overall PASS for every seed 1…" + NSEEDS, function () {
+    var x = N1(); return { pass: x.pass, detail: x.n + "/" + NSEEDS + " PASS" + (x.fails.length ? "; failing seeds " + x.fails.slice(0, 10).join(", ") : "") + (x.sig.length ? "; σ not applied for seeds " + x.sig.join(", ") : "") };
+  });
+  add("AC-16 N2: σ = " + SIGMA + ", S2 Q09 FAIL for every seed 1…" + NSEEDS + " (lowest ≥ 3.40 × 0.97 = 3.298 V)", function () {
+    var x = N2(); return { pass: x.pass, detail: x.n + "/" + NSEEDS + " FAIL; Q09 range " + x.low.toFixed(4) + "–" + x.high.toFixed(4) + " V (bound " + x.bound.toFixed(3) + " V)" + (x.bad.length ? "; bad seeds " + x.bad.slice(0, 10).join(", ") : "") };
+  });
+  add("AC-16 N3: Custom r_ce_mohm sweep; every seed's PASS/FAIL crossing inside [≈10.534, ≈11.495] mΩ; seed-independent outside", function () {
+    var x = N3(); return { pass: x.pass, detail: n3Text(x) };
+  });
+  function ac16Table() {
+    var a = N1(), b = N2(), c = N3();
+    return [
+      { id: "N1", check: "σ = " + SIGMA + ", S0 PASS for every seed 1…" + NSEEDS, result: a.n + "/" + NSEEDS + " overall PASS", pass: a.pass },
+      { id: "N2", check: "σ = " + SIGMA + ", S2 fails Q09 for every seed 1…" + NSEEDS, result: b.n + "/" + NSEEDS + " Q09 FAIL; lowest " + b.low.toFixed(4) + " V > 3.2 V (bound 3.298 V)", pass: b.pass },
+      { id: "N3", check: "Custom r_ce_mohm sweep; crossing between ≈10.534 and ≈11.495 mΩ", result: n3Text(c), pass: c.pass }
+    ];
+  }
+
+  var NOISY_Q = ["Q01", "Q03", "Q04", "Q06", "Q07", "Q08", "Q09", "Q10", "Q11", "Q12", "Q18"];
+  add("Noise: every factor within ±3σ over seeds 1…" + NSEEDS + " (Q14 within ±6%, σ = 0.02); spread ≈ σ", function () {
+    var bad = [], info = [];
+    NOISY_Q.concat(["Q14"]).forEach(function (q) {
+      var sg = q === "Q14" ? 2 * SIGMA : SIGMA, mn = Infinity, mx = -Infinity, ss = 0;
+      for (var s = 1; s <= NSEEDS; s++) { var f = RNG.factor(sg, s, q); mn = Math.min(mn, f); mx = Math.max(mx, f); ss += (f - 1) * (f - 1); }
+      var sd = Math.sqrt(ss / NSEEDS);
+      if (mn < 1 - 3 * sg - 1e-12 || mx > 1 + 3 * sg + 1e-12 || sd < 0.9 * sg || sd > 1.1 * sg) bad.push(q);
+      if (q === "Q09" || q === "Q14") info.push(q + " " + mn.toFixed(4) + "–" + mx.toFixed(4) + ", sd " + sd.toFixed(4));
+    });
+    return { pass: bad.length === 0, detail: (bad.length ? "out of bounds: " + bad.join(", ") + "; " : "") + info.join("; ") };
+  });
+  add("Noise: a value depends only on (σ, seed, quantity), not on call order; another seed gives another value", function () {
+    var a = RNG.factor(SIGMA, 7, "Q09"); RNG.factor(SIGMA, 8, "Q12"); RNG.factor(SIGMA, 7, "Q01");
+    var b = RNG.factor(SIGMA, 7, "Q09"), c = RNG.factor(SIGMA, 8, "Q09"), d = RNG.factor(SIGMA, 7, "Q11");
+    return { pass: a === b && a !== c && a !== d && RNG.factor(0, 7, "Q09") === 1, detail: "seed 7 Q09 " + a + " / " + b + "; seed 8 Q09 " + c + "; seed 7 Q11 " + d };
+  });
+  add("Noise: σ = 0 run adds no PRNG call; noise-on run does", function () {
+    var c0 = RNG.prngCalls(); reportFor("S0"); var c1 = RNG.prngCalls(); noisyDet({}); var c2 = RNG.prngCalls();
+    return { pass: c1 === c0 && c2 > c1, detail: "σ = 0: +" + (c1 - c0) + " calls; σ = " + SIGMA + ": +" + (c2 - c1) + " calls" };
+  });
+  add("Noise: Setup noise on → inputs noise_rel_sigma " + SIGMA + "; shown in Overrides and the noise text", function () {
+    var pre = V.configPreflight(noisySetup({})), off = V.configPreflight(setup({ noise: false }));
+    var ov = T().overridesText(pre.inputs), nt = T().noiseText(pre.inputs);
+    return { pass: pre.status === "OK" && pre.inputs.noise_rel_sigma === SIGMA && pre.inputs.bench_conditions.noise_rel_sigma === SIGMA &&
+                   off.inputs.noise_rel_sigma === 0 && ov.indexOf("bench.noise_rel_sigma = " + SIGMA) >= 0 && /σ = 0\.01 .*seed 20261018.*assume σ = 0/.test(nt) && T().noiseText(off.inputs) === "off (σ = 0)",
+             detail: "on: " + pre.inputs.noise_rel_sigma + " · overrides: " + ov + " · " + nt };
+  });
+  add("Noise: setup.noise = \"yes\" → INVALID (setup.noise); Custom bench noise_rel_sigma 0.06 → INVALID (05 §2.1)", function () {
+    var a = V.configPreflight(setup({ noise: "yes" }));
+    var b = V.configPreflight(setup({ scenario_id: "CUSTOM", custom_overrides: { module: {}, bench: { noise_rel_sigma: 0.06 } } }));
+    var ra = invalid(a, "setup.noise"), rb = invalid(b, "bench.noise_rel_sigma");
+    return { pass: ra.pass && rb.pass, detail: ra.detail + " || " + rb.detail };
+  });
+  add("Noise on: same seed twice → byte-identical deterministic sections (AC-02); seeds 1 and 2 differ", function () {
+    var a = JSON.stringify(noisyDet({})), b = JSON.stringify(noisyDet({})), c = JSON.stringify(noisyDet({ seed: 1 })), e = JSON.stringify(noisyDet({ seed: 2 }));
+    return { pass: a === b && c !== e, detail: (a === b ? "identical" : "differ") + "; seed 1 vs 2 " + (c !== e ? "differ" : "identical") };
+  });
+  add("Noise on (seed 20261018): Q09 equation states the noise factor; readings move, timings and safe state do not", function () {
+    var d = noisyDet({}), base = det(), r = readingIn(d, "Q09");
+    var f = RNG.factor(SIGMA, 20261018, "Q09");
+    var eqOk = r.model_equation.indexOf("= 2.40 V; with seeded noise × " + f.toFixed(4) + " ≈ ") > 0;
+    // Q10 sits in T06, NOT_APPLICABLE at defaults (gate not accessible), so it has no value to move
+    var measured = NOISY_Q.filter(function (q) { return typeof readingIn(base, q).value === "number"; });
+    var moved = measured.filter(function (q) { return readingIn(d, q).value !== readingIn(base, q).value; }).length;
+    var same = d.physical_total_s === base.physical_total_s && JSON.stringify(d.safe_state.discharge_time_s) === JSON.stringify(base.safe_state.discharge_time_s) &&
+      JSON.stringify(d.events.map(function (e) { return [e.type, e.physical_time_s]; })) === JSON.stringify(base.events.map(function (e) { return [e.type, e.physical_time_s]; }));
+    return { pass: eqOk && measured.length === 10 && moved === measured.length && same && d.overall.verdict === "PASS",
+             detail: r.model_equation + " · " + moved + "/" + measured.length + " measured noisy readings moved · events and total " + (same ? "unchanged" : "CHANGED") + " · overall " + d.overall.verdict };
+  });
+  add("Noise on: Custom r_ce_mohm = 12 and S2 with the same seed give the same stages, overall and events (noise keyed on seed and quantity only)", function () {
+    var a = noisyDet({ scenario_id: "S2", seed: 42 }), b = noisyDet({ scenario_id: "CUSTOM", seed: 42, custom_overrides: { module: { r_ce_mohm: 12 }, bench: {} } });
+    function core(d) { return JSON.stringify([d.stages, d.overall, d.safe_state, d.events, d.physical_total_s]); }
+    return { pass: core(a) === core(b), detail: core(a) === core(b) ? "identical (Q09 " + readingIn(a, "Q09").value + " V)" : "differ" };
+  });
+  add("Noise on: HTML report Inputs carry σ, seed and the 03 §12 note", function () {
+    var pre = V.configPreflight(noisySetup({}));
+    var html = REP.buildHtml(REP.buildJson(SEQ.runToEnd(SEQ.create(pre)), { run_id: "RUN-SELFCHECK", operator: "selfcheck" }));
+    var ok = html.indexOf("0.01 — seeded noise on: σ = 0.01 multiplicative Gaussian (Q14 σ = 0.02), truncated at ±3σ, seed 20261018") >= 0 && html.indexOf("assume σ = 0") >= 0;
+    return { pass: ok, detail: ok ? "noise row present" : "noise row missing" };
+  });
+  add("AC-17 S8b: one VERIFICATION_UNAVAILABLE then FAULT_LOCKED; no DISCHARGE_VERIFIED / DISCHARGE_FAILED / DOOR_UNLOCKED; door LOCKED; report exportable", function () {
+    var r = rep("S8b"), d = r.deterministic;
+    var seq = d.events.filter(function (e) { return ["VERIFICATION_UNAVAILABLE", "FAULT_LOCKED"].indexOf(e.type) >= 0; }).map(function (e) { return e.type; });
+    var none = ["DISCHARGE_VERIFIED", "DISCHARGE_FAILED", "DOOR_UNLOCKED"].filter(function (t) { return ev(d, t).length; });
+    var html = REP.buildHtml(r);
+    var ok = eq(seq, ["VERIFICATION_UNAVAILABLE", "FAULT_LOCKED"]) && none.length === 0 && d.safe_state.door === "LOCKED" &&
+      d.safe_state.final_state === "FAULT_LOCKED" && ev(d, "DISCHARGE_START").length === 1 && html.indexOf(D.fixed_texts.fault_locked_banner) >= 0;
+    return { pass: ok, detail: seq.join(" → ") + "; unexpected: " + (none.join(", ") || "none") + "; door " + d.safe_state.door + "; HTML " + html.length + " chars" };
+  });
+
+  function run() {
+    return cases.map(function (c, i) {
+      var r;
+      try { r = c.fn(); } catch (x) { r = { pass: false, detail: "exception: " + x.message }; }
+      return { n: i + 1, name: c.name, result: r.pass ? "PASS" : "FAIL", detail: r.detail };
+    });
+  }
+  return { run: run, s12Table: s12Table, ac14Table: ac14Table, ac16Table: ac16Table };
+})();
+
+if (typeof document !== "undefined" && document.getElementById("rows")) {
+  document.getElementById("sim-banner").textContent = window.APP_DATA.fixed_texts.banner;
+  var results = window.IGBT.selfcheck.run();
+  var rows = document.getElementById("rows");
+  results.forEach(function (r) {
+    var tr = document.createElement("tr");
+    [String(r.n), r.name, r.result, r.detail].forEach(function (t, i) {
+      var td = document.createElement("td");
+      td.textContent = t;
+      if (i === 2) td.className = r.result;
+      if (i === 3) td.style.fontSize = "12px";
+      tr.appendChild(td);
+    });
+    rows.appendChild(tr);
+  });
+  var passed = results.filter(function (r) { return r.result === "PASS"; }).length;
+  document.getElementById("total").textContent = "Total: " + passed + " / " + results.length + " PASS";
+  document.getElementById("total").className = passed === results.length ? "PASS" : "FAIL";
+}
+</script>
+</body>
+</html>

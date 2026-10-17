@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+# Raw received decks (80 MB, never edited); summaries in Sources/ are tracked
+Originals/*.pptx
+# Obsidian per-device state
+.obsidian/workspace*.json
+.obsidian/cache
+.trash/
+# graphify output (rebuilt automatically)
+graphify-out/
+# Packaged app zips (rebuilt from igbt-test-cell/)
+dist/
+# Obsidian vault settings (not part of the app)
+.obsidian/
